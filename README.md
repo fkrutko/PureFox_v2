@@ -2,7 +2,7 @@
 
 **Сетевой аудио-плеер (endpoint) на Luckfox Pico Max / Ultra с поддержкой внешних клоков**
 
-<img src="file:///C:/Users/admin/AppData/Roaming/marktext/images/2026-05-24-09-29-43-image.png" title="" alt="" width="519">
+<img src="images/2026-05-24-09-29-43-image.png" title="" alt="" width="519">
 
 ## О проекте
 
@@ -63,7 +63,7 @@ PCM(44.1-768) и Native DSD(64–512)
 - **EXT** — внешнее тактирование от мастер-клока
 - **PLL** — синтезатор частоты RV1106
 
-<img src="file:///C:/Users/admin/AppData/Roaming/marktext/images/2026-05-24-10-02-10-image.png" title="" alt="" width="389">
+<img src="images/2026-05-24-10-02-10-image.png" title="" alt="" width="389">
 
 
 
