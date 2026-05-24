@@ -2,22 +2,25 @@
 
 **Network audio endpoint on Luckfox Pico Max / Ultra with external clock support**
 
+<img title="" src="images/2026-05-24-09-29-43-image.png" alt="" width="519">
+
 ## About
 
 PureFox is a firmware for **Luckfox Pico Max** and **Ultra** boards based on Rockchip RV1106, turning them into a high-quality network audio transport with support for:
 
-##### Network Player Mode
+#### Network Player Mode
 
 - **I2S** output (external clocking EXT / internal PLL synthesizer)
 - **USB** output (UAC2)
 
-##### USB Transport Mode
+#### USB Transport Mode
 
 - USB (UAC2) to I2S
 
-##### Supported Audio Standards
+#### Supported Audio Standards
 
-- PCM (44.1–768 kHz) and Native DSD (64–512)
+- PCM 2ch up to 768 kHz or PCM 8ch up to 192 kHz
+- Native DSD (64–512)
 
 ## Specifications
 
@@ -41,7 +44,7 @@ The latest firmware is available at:
 
 ### Installation (via USB)
 
-1. Install drivers from [Luckfox Wiki](https://wiki.luckfox.com/)
+1. Install drivers from [Luckfox Wiki](https://wiki.luckfox.com/Luckfox-Pico-RV1106/Downloads)
 2. Run [RV1106_Toolkit.exe](https://mega.nz/file/ndFiCATS#CG5lF0Nz7JWhmoyrECxeIQDIw3iS5Lv3PZq-MIzJa9c) as Administrator, select **rv1106**
 3. Hold the **BOOT** button on the board and connect USB
 4. Wait for **Maskrom** to appear in the program
@@ -52,7 +55,12 @@ The latest firmware is available at:
 ### Web Interface
 
 Once booted, the device is available at `http://purefox/` or by IP.  
-SSH login: `root`, password: `purefox`.
+The web interface supports automatic language switching (English, Russian, Chinese, German, French).  
+Unused player buttons can be hidden by swiping left.  
+The version button at the bottom is for online firmware updates.
+
+SSH access is enabled:  
+Login `root`, password: `purefox`.
 
 ## Operating Modes
 
@@ -60,6 +68,8 @@ SSH login: `root`, password: `purefox`.
 
 - **EXT** — external master clock
 - **PLL** — RV1106 frequency synthesizer
+
+<img title="" src="images/2026-05-24-10-02-10-image.png" alt="" width="389">
 
 ### USB (UAC2 Gadget)
 
