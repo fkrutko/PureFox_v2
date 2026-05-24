@@ -76,10 +76,10 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 ### USB (UAC2 Gadget)
 
 - PureCore UAC2 — эмуляция USB Audio Class 2
-- Поддержка PCM 2ch до 768kHz или PCM 8ch до 192kHz
+- Поддержка PCM 2ch до 768kHz
 - Поддержка DSD (DoP и Native через Alt-Setting 2)
 - Режим **USB to I2S** — USB вход → I2S выход
-- Для поддержеи native DSD и ASIO требуются проприетарные драйвера. Для тестирования предоставляются по запросу. Ведётся работа над собственными драйверами ASIO. 
+- Для поддержки native DSD и ASIO требуются проприетарные драйвера. Для тестирования предоставляются по запросу. Ведётся работа над собственными драйверами ASIO.  
 
 ### Переключение выходов
 
@@ -87,15 +87,19 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 
 ## Поддерживаемые плееры
 
-- Roon Ready (RAAT)
-- Spotify Connect (librespot)
-- Tidal Connect (только в тестовой версии!)
-- Qobuz Connect
-- Squeezelite (LMS)
-- MPD
-- shairport-sync (AirPlay)
 - NAA (HQPlayer)
-- DLNA Bridge
+- Roon Ready (RAAT)
+- Squeezelite (LMS)
+- shairport-sync (AirPlay)
+- MPD (UPmP)
+- APlayer (только веб радио)
+- APrender (UPnP)
+- APScream (альтернатива Diretta)
+- Spotify Connect (librespot)
+- Qobuz Connect
+- Tidal Connect (только в тестовой версии!)
+  
+  
 
 ## Ветки репозитория
 

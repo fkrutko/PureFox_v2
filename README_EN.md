@@ -19,7 +19,7 @@ PureFox is a firmware for **Luckfox Pico Max** and **Ultra** boards based on Roc
 
 #### Supported Audio Standards
 
-- PCM 2ch up to 768 kHz or PCM 8ch up to 192 kHz
+- PCM 2ch up to 768 kHz
 - Native DSD (64–512)
 
 ## Specifications
@@ -59,8 +59,7 @@ The web interface supports automatic language switching (English, Russian, Chine
 Unused player buttons can be hidden by swiping left.  
 The version button at the bottom is for online firmware updates.
 
-SSH access is enabled:  
-Login `root`, password: `purefox`.
+SSH access is enabled: login `root`, password: `purefox`.
 
 ## Operating Modes
 
@@ -74,7 +73,7 @@ Login `root`, password: `purefox`.
 ### USB (UAC2 Gadget)
 
 - PureCore UAC2 — USB Audio Class 2 emulation
-- PCM 2ch up to 768 kHz or PCM 8ch up to 192 kHz
+- PCM 2ch up to 768 kHz
 - DSD support (DoP and Native via Alt-Setting 2)
 - **USB to I2S** mode — USB input → I2S output
 - Proprietary drivers required for Native DSD and ASIO. Available for testing upon request. Custom ASIO drivers are in development.
@@ -85,15 +84,17 @@ Via web interface: **I2S ↔ USB** toggle
 
 ## Supported Players
 
-- Roon Ready (RAAT)
-- Spotify Connect (librespot)
-- Tidal Connect (test version only!)
-- Qobuz Connect
-- Squeezelite (LMS)
-- MPD
-- shairport-sync (AirPlay)
 - NAA (HQPlayer)
-- DLNA Bridge
+- Roon Ready (RAAT)
+- Squeezelite (LMS)
+- shairport-sync (AirPlay)
+- MPD (UPnP)
+- APlayer (web radio only)
+- APrender (UPnP)
+- APScream (Diretta alternative)
+- Spotify Connect (librespot)
+- Qobuz Connect
+- Tidal Connect (test version only!)
 
 ## Repository Branches
 
