@@ -19,7 +19,7 @@ PureFox is a firmware for **Luckfox Pico Max** and **Ultra** boards based on Roc
 
 #### Supported Audio Standards
 
-- PCM 2ch up to 768 kHz
+- PCM 2ch up to 768 kHz or PCM 8ch up to 192 kHz
 - Native DSD (64–512)
 
 ## Specifications
@@ -66,7 +66,7 @@ SSH access is enabled: login `root`, password: `purefox`.
 ### I2S
 
 - **EXT** — external master clock
-- **PLL** — RV1106 frequency synthesizer
+- **PLL** — RV1106 frequency synthesizer. The quality of the internal PLL is surprisingly high. According to numerous subjective tests by audio experts, the internal PLL sound quality rivals that of expensive external clock generators.
 
 <img title="" src="images/2026-05-24-10-02-10-image.png" alt="" width="389">
 
