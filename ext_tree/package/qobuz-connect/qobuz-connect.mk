@@ -33,8 +33,7 @@ endef
 
 define QOBUZ_CONNECT_INSTALL_TARGET_CMDS
 	$(INSTALL) -d $(TARGET_DIR)/opt/qobuz-connect
-	$(INSTALL) -m 755 $(@D)/build/qobuz_connect_sample_app $(TARGET_DIR)/opt/qobuz-connect/qobuz-connect-bin
-	chmod +x $(TARGET_DIR)/opt/qobuz-connect/qobuz-connect
+	$(INSTALL) -m 755 $(@D)/build/qobuz_connect_sample_app $(TARGET_DIR)/opt/qobuz-connect/qobuz-connect
 	$(INSTALL) -d $(TARGET_DIR)/usr/lib
 	$(INSTALL) -m 755 $(@D)/sdk/lib/libqobuz_connect.so.1.0.0 $(TARGET_DIR)/usr/lib/
 	ln -sf libqobuz_connect.so.1.0.0 $(TARGET_DIR)/usr/lib/libqobuz_connect.so
