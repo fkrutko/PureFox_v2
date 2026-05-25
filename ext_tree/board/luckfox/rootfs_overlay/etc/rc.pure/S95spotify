@@ -3,7 +3,7 @@
 
 start() {
     # Force NTP sync (required for Spotify TLS)
-    /etc/init.d/S48sntp start 2>/dev/null &
+    /usr/bin/force-time-sync 30 >/dev/null 2>&1 &
     NTP_WAIT=0
     while [ $NTP_WAIT -lt 30 ]; do
         if ! date | grep -q 1970; then break; fi
@@ -109,5 +109,4 @@ case "$1" in
 esac
 
 exit $?
-
 

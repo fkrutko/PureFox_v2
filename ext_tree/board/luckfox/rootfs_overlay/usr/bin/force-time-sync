@@ -1,0 +1,36 @@
+#!/bin/sh
+
+# Force a quick clock correction for TLS-sensitive services via chrony.
+
+TIMEOUT="${1:-30}"
+
+check_time_ok() {
+    ! date | grep -q 1970
+}
+
+wait_time_ok() {
+    i=0
+    while [ "$i" -lt "$TIMEOUT" ]; do
+        if check_time_ok; then
+            return 0
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+if command -v chronyc >/dev/null 2>&1; then
+    if [ -x /etc/init.d/S49chronyd ]; then
+        /etc/init.d/S49chronyd start >/dev/null 2>&1 || true
+    fi
+
+    # Ask chronyd to measure quickly and step clock if needed.
+    chronyc -a burst 4/4 >/dev/null 2>&1 || true
+    chronyc -a makestep >/dev/null 2>&1 || true
+
+    wait_time_ok && exit 0
+fi
+
+check_time_ok
+exit $?

@@ -1,6 +1,6 @@
 #!/bin/sh
 start() {
-    /etc/init.d/S48sntp start 2>/dev/null &
+    /usr/bin/force-time-sync 30 >/dev/null 2>&1 &
     for i in $(seq 1 30); do
         if ! date | grep -q 1970; then break; fi
         sleep 1

@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Buildroot -g0cc2dd30 Configuration
+# Buildroot -g9785697e-dirty Configuration
 #
 BR2_HAVE_DOT_CONFIG=y
 BR2_EXTERNAL_NAMES="ext_tree"
@@ -2471,7 +2471,8 @@ BR2_PACKAGE_LIBATOMIC_OPS_ARCH_SUPPORTS=y
 BR2_PACKAGE_LIBBSD_ARCH_SUPPORTS=y
 # BR2_PACKAGE_LIBBSD is not set
 # BR2_PACKAGE_LIBBYTESIZE is not set
-# BR2_PACKAGE_LIBCAP is not set
+BR2_PACKAGE_LIBCAP=y
+# BR2_PACKAGE_LIBCAP_TOOLS is not set
 # BR2_PACKAGE_LIBCAP_NG is not set
 # BR2_PACKAGE_LIBCGROUP is not set
 # BR2_PACKAGE_LIBCLC is not set
@@ -2732,7 +2733,8 @@ BR2_PACKAGE_AVAHI_DEFAULT_SERVICES=y
 #
 # cfm needs a toolchain w/ threads, kernel headers >= 5.0
 #
-# BR2_PACKAGE_CHRONY is not set
+BR2_PACKAGE_CHRONY=y
+# BR2_PACKAGE_CHRONY_DEBUG_LOGGING is not set
 BR2_PACKAGE_CIVETWEB=y
 # BR2_PACKAGE_CIVETWEB_SERVER is not set
 BR2_PACKAGE_CIVETWEB_LIB=y
@@ -2900,17 +2902,7 @@ BR2_PACKAGE_MONGREL2_LIBC_SUPPORTS=y
 # BR2_PACKAGE_NLOAD is not set
 # BR2_PACKAGE_NMAP is not set
 # BR2_PACKAGE_NOIP is not set
-BR2_PACKAGE_NTP=y
-BR2_PACKAGE_NTP_SNTP=y
-# BR2_PACKAGE_NTP_NTP_KEYGEN is not set
-# BR2_PACKAGE_NTP_NTP_SHM_CLK is not set
-# BR2_PACKAGE_NTP_NTPD is not set
-BR2_PACKAGE_NTP_NTPDATE=y
-BR2_PACKAGE_NTP_NTPDC=y
-BR2_PACKAGE_NTP_NTPQ=y
-# BR2_PACKAGE_NTP_NTPSNMPD is not set
-# BR2_PACKAGE_NTP_NTPTIME is not set
-# BR2_PACKAGE_NTP_TICKADJ is not set
+# BR2_PACKAGE_NTP is not set
 # BR2_PACKAGE_NTPSEC is not set
 # BR2_PACKAGE_NUTTCP is not set
 # BR2_PACKAGE_ODHCP6C is not set
@@ -2920,6 +2912,7 @@ BR2_PACKAGE_NTP_NTPQ=y
 # BR2_PACKAGE_OPEN_LLDP is not set
 # BR2_PACKAGE_OPEN_PLC_UTILS is not set
 # BR2_PACKAGE_OPENCONNECT is not set
+# BR2_PACKAGE_OPENNTPD is not set
 # BR2_PACKAGE_OPENOBEX is not set
 # BR2_PACKAGE_OPENRESOLV is not set
 BR2_PACKAGE_OPENSSH=y
@@ -4505,7 +4498,7 @@ BR2_TARGET_UBOOT_CUSTOM_PATCH_DIR=""
 #
 
 #
-# external BR tree for Luckfox Pico Max (in /mnt/sdb/PureFox/ext_tree)
+# external BR tree for Luckfox Pico Max (in /mnt/sdb/PureFox_v2/ext_tree)
 #
 
 #

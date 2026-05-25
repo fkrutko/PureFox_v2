@@ -48,7 +48,7 @@ start() {
     # Check and fix system time if needed
     if ! check_time; then
         echo "System time appears incorrect, syncing..."
-        /etc/init.d/S48sntp start
+        /usr/bin/force-time-sync 30
         sleep 2
         if ! check_time; then
             echo "Warning: System time may still be incorrect"
@@ -129,5 +129,4 @@ case "$1" in
 esac
 
 exit $?
-
 
