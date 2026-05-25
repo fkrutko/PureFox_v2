@@ -8,10 +8,22 @@ $(document).ready(function () {
     // Global variables
     let lastKnownStatus = null;
     let isServiceSwitching = false; // Flag to block updates during switching
+    let serviceSwitchWatchdog = null;
+    let serviceSwitchStartedAt = 0;
     let isVolumeChanging = false; // Flag to block volume updates during user changes
     let isAlsaSwitching = false; // Flag to block ALSA updates during switching
     let statusInterval = null;
     let isDlnaBridgeActive = false; // true when DLNA bridge is enabled
+
+    function resetServiceSwitchFlag() {
+        isServiceSwitching = false;
+        serviceSwitchStartedAt = 0;
+        if (serviceSwitchWatchdog) {
+            clearTimeout(serviceSwitchWatchdog);
+            serviceSwitchWatchdog = null;
+        }
+        hideSpinner();
+    }
     
     // Universal interface update function
     function updateInterfaceFromStatus(data) {
@@ -377,11 +389,11 @@ $(document).ready(function () {
         if (text) {
             $('.spinner-text').text(text);
         }
-        $('.spinner-overlay').css('display', 'flex');
+        $('.spinner-overlay').addClass('show');
     }
 
     function hideSpinner() {
-        $('.spinner-overlay').css('display', 'none');
+        $('.spinner-overlay').removeClass('show');
         // Restore original text
         $('.spinner-text').text(translations[currentLang]['switching_player']);
     }
@@ -590,20 +602,13 @@ $(document).ready(function () {
     // Обработка кликов по кнопкам сервисов (ПОЛНОСТЬЮ СОХРАНЕНА!)
     $('.btn-custom').click(function(e) {
         if ($(e.target).is('a') || $(e.target).is('img')) return true;
-        if (!$(this).data('service') || $(this).hasClass('active')) return;
+        if (!$(this).data('service')) return;
         
-        // Блокируем клики если уже идёт переключение
         if (isServiceSwitching) {
-            const busyText = {
-                'ru': 'Идёт переключение плеера, подождите...',
-                'en': 'Player switch in progress, please wait...',
-                'de': 'Player-Wechsel läuft, bitte warten...',
-                'fr': 'Changement de lecteur en cours, veuillez patienter...',
-                'zh': '播放器切换中，请稍候...'
-            };
-            customAlert(busyText[currentLang] || busyText['en']);
             return;
         }
+
+        if ($(this).hasClass('active')) return;
 
         const service = $(this).data('service');
         forceStatusCheck(); // Принудительная проверка при клике
@@ -621,6 +626,12 @@ $(document).ready(function () {
     function switchPlayerService(service) {
         // Блокируем обновления кнопок во время переключения
         isServiceSwitching = true;
+        showSpinner(translations[currentLang]['switching_player']);
+        serviceSwitchStartedAt = Date.now();
+        if (serviceSwitchWatchdog) clearTimeout(serviceSwitchWatchdog);
+        serviceSwitchWatchdog = setTimeout(function() {
+            resetServiceSwitchFlag();
+        }, 45000);
 
         // Unlock ALSA toggle and deactivate USBtoI2S button when switching to any player
         unlockAlsaToggle();
@@ -666,7 +677,8 @@ $(document).ready(function () {
                                     console.warn('Нет активных сервисов, продолжаем проверку... (попытка', checkCount, 'из', maxChecks, ')');
                                     if (checkCount >= maxChecks) {
                                         console.error('Сервис', service, 'не поднялся после максимального числа попыток');
-                                                                                $('.btn-custom').removeClass('active');
+                                        resetServiceSwitchFlag();
+                                        $('.btn-custom').removeClass('active');
                                         customAlert(translations[currentLang]['service_error']);
                                         return;
                                     }
@@ -677,7 +689,7 @@ $(document).ready(function () {
                                 
                                 if (activeService === service) {
                                     console.log('Успешно переключен на', service);
-                                                                        isServiceSwitching = false; // Разблокируем обновления
+                                    resetServiceSwitchFlag();
                                     lastKnownStatus = response;
                                     updateInterfaceFromStatus(response);
                                     console.log('Сервис переключен успешно');
@@ -690,7 +702,7 @@ $(document).ready(function () {
                                     }, 2500);
                                 } else if (activeService !== service) {
                                     console.log("Активирован сервис " + activeService + " вместо " + service);
-                                                                        isServiceSwitching = false; // Разблокируем обновления
+                                    resetServiceSwitchFlag();
                                     $('.btn-custom').removeClass('active');
                                     $(`button[data-service="${activeService}"]`).addClass('active');
                                     lastKnownStatus = response;
@@ -704,7 +716,7 @@ $(document).ready(function () {
                                     }, 2500);
                                 } else if (checkCount >= maxChecks) {
                                     console.error("Тайм-аут при переключении на сервис " + service);
-                                                                        isServiceSwitching = false; // Разблокируем обновления
+                                    resetServiceSwitchFlag();
                                     $('.btn-custom').removeClass('active');
                                     customAlert(translations[currentLang]['service_error']);
                                 } else {
@@ -713,7 +725,7 @@ $(document).ready(function () {
                             },
                             error: function(xhr, status, error) {
                                 console.error('Ошибка проверки состояния:', status, error);
-                                                                isServiceSwitching = false; // Разблокируем обновления
+                                resetServiceSwitchFlag();
                                 $('.btn-custom').removeClass('active');
                                 customAlert(translations[currentLang]['service_error']);
                             }
@@ -725,8 +737,7 @@ $(document).ready(function () {
             },
             error: function(xhr, status, error) {
                 console.error('AJAX error switching to', service, ':', status, error, 'Response:', xhr.responseText);
-                clearTimeout(switchingTimeout); // Отменяем таймаут при ошибке AJAX
-                isServiceSwitching = false; // Разблокируем обновления
+                resetServiceSwitchFlag();
                 $('.btn-custom').removeClass('active');
                 customAlert(translations[currentLang]['service_error'] + ': ' + status);
             }
@@ -1836,5 +1847,3 @@ $(document).ready(function () {
 
 });
 /* Cache bust version: 1753367744 */
-
-
