@@ -1,23 +1,23 @@
 $(document).ready(function () {
     // Polling system configuration
     const POLLING_CONFIG = {
-        NORMAL_INTERVAL: 3000,    // 3 seconds normal interval
-        SWITCHING_INTERVAL: 1000  // 1 second when switching
+        NORMAL_INTERVAL: 3000    // 3 seconds normal interval
     };
 
     // Global variables
     let lastKnownStatus = null;
     let isServiceSwitching = false; // Flag to block updates during switching
     let serviceSwitchWatchdog = null;
-    let serviceSwitchStartedAt = 0;
     let isVolumeChanging = false; // Flag to block volume updates during user changes
     let isAlsaSwitching = false; // Flag to block ALSA updates during switching
     let statusInterval = null;
     let isDlnaBridgeActive = false; // true when DLNA bridge is enabled
+    const DEBUG_UI = new URLSearchParams(window.location.search).get('debug') === '1';
+    const debugLog = (...args) => { if (DEBUG_UI) console.log(...args); };
+    const debugWarn = (...args) => { if (DEBUG_UI) console.warn(...args); };
 
     function resetServiceSwitchFlag() {
         isServiceSwitching = false;
-        serviceSwitchStartedAt = 0;
         if (serviceSwitchWatchdog) {
             clearTimeout(serviceSwitchWatchdog);
             serviceSwitchWatchdog = null;
@@ -359,19 +359,37 @@ $(document).ready(function () {
 
     // Force status check on user actions
     function forceStatusCheck() {
-        console.log('Принудительная проверка состояния...');
+        debugLog('Принудительная проверка состояния...');
         $.ajax({
             url: 'status_fast.php',
             method: 'GET',
             timeout: 3000,
             dataType: 'json',
             success: function(response) {
-                console.log('Принудительная проверка:', response);
+                debugLog('Принудительная проверка:', response);
                 updateInterfaceFromStatus(response);
                 lastKnownStatus = response;
             },
             error: function() {
-                console.warn('Ошибка принудительной проверки');
+                debugWarn('Ошибка принудительной проверки');
+            }
+        });
+    }
+
+    // Refresh status from backend after delayed service transitions.
+    function updateStatusFromServer() {
+        $.ajax({
+            url: 'status_fast.php',
+            method: 'GET',
+            timeout: 3000,
+            dataType: 'json',
+            cache: false,
+            success: function(response) {
+                lastKnownStatus = response;
+                updateInterfaceFromStatus(response);
+            },
+            error: function(xhr, status, error) {
+                console.error('Status refresh failed:', status, error);
             }
         });
     }
@@ -428,7 +446,7 @@ $(document).ready(function () {
 
     // Принудительная проверка состояния сервисов (только по требованию)
     function checkActiveService(callback) {
-        console.log('Проверка активного сервиса...');
+        debugLog('Проверка активного сервиса...');
         $.ajax({
             url: 'status_fast.php',
             method: 'GET',
@@ -459,14 +477,14 @@ $(document).ready(function () {
                 if (callback) callback(activeService);
             },
             error: function() {
-                console.warn('Ошибка проверки состояния');
+                debugWarn('Ошибка проверки состояния');
             }
         });
     }
 
     // Output selector UI update (usb / i2s / bridge)
     function updateAlsaUI(alsaState) {
-        console.log("updateAlsaUI called, state:", alsaState, "stack:", new Error().stack);
+        debugLog("updateAlsaUI called, state:", alsaState);
         const toggleInput = $('#alsa-toggle');
         const i2sSettingsLink = $('#i2s-settings-link');
 
@@ -627,7 +645,6 @@ $(document).ready(function () {
         // Блокируем обновления кнопок во время переключения
         isServiceSwitching = true;
         showSpinner(translations[currentLang]['switching_player']);
-        serviceSwitchStartedAt = Date.now();
         if (serviceSwitchWatchdog) clearTimeout(serviceSwitchWatchdog);
         serviceSwitchWatchdog = setTimeout(function() {
             resetServiceSwitchFlag();
@@ -640,7 +657,7 @@ $(document).ready(function () {
         // СРАЗУ делаем кнопку активной для отзывчивости UI
         $('.btn-custom').removeClass('active');
         $(`button[data-service="${service}"]`).addClass('active');
-        console.log('Кнопка', service, 'активирована мгновенно, ожидаем запуск сервиса...');
+        debugLog('Кнопка', service, 'активирована мгновенно, ожидаем запуск сервиса...');
 
         // Переключение сервиса
         
@@ -654,7 +671,7 @@ $(document).ready(function () {
             data: { service: service },
             timeout: 15000,
             success: function() {
-                console.log('Команда переключения на', service, 'отправлена, начинаем проверку...');
+                debugLog('Команда переключения на', service, 'отправлена, начинаем проверку...');
                 
                 // Сразу начинаем проверку без задержки
                 const checkInterval = 500; // 500ms между проверками
@@ -671,10 +688,10 @@ $(document).ready(function () {
                                 const activeService = response.active_service || '';
                                 checkCount++;
                                 
-                                console.log('Проверка', checkCount, ': активный сервис =', activeService, ', ожидаемый =', service);
+                                debugLog('Проверка', checkCount, ': активный сервис =', activeService, ', ожидаемый =', service);
                                 
                                 if (!activeService) {
-                                    console.warn('Нет активных сервисов, продолжаем проверку... (попытка', checkCount, 'из', maxChecks, ')');
+                                    debugWarn('Нет активных сервисов, продолжаем проверку... (попытка', checkCount, 'из', maxChecks, ')');
                                     if (checkCount >= maxChecks) {
                                         console.error('Сервис', service, 'не поднялся после максимального числа попыток');
                                         resetServiceSwitchFlag();
@@ -688,20 +705,20 @@ $(document).ready(function () {
                                 }
                                 
                                 if (activeService === service) {
-                                    console.log('Успешно переключен на', service);
+                                    debugLog('Успешно переключен на', service);
                                     resetServiceSwitchFlag();
                                     lastKnownStatus = response;
                                     updateInterfaceFromStatus(response);
-                                    console.log('Сервис переключен успешно');
+                                    debugLog('Сервис переключен успешно');
 
                                     // Принудительно обновляем данные из system_status.json через 2.5s
                                     // (учитываем задержку обновления status_monitor ~2s)
                                     setTimeout(() => {
-                                        console.log('Обновление данных после переключения источника...');
+                                        debugLog('Обновление данных после переключения источника...');
                                         updateStatusFromServer();
                                     }, 2500);
                                 } else if (activeService !== service) {
-                                    console.log("Активирован сервис " + activeService + " вместо " + service);
+                                    debugLog("Активирован сервис " + activeService + " вместо " + service);
                                     resetServiceSwitchFlag();
                                     $('.btn-custom').removeClass('active');
                                     $(`button[data-service="${activeService}"]`).addClass('active');
@@ -711,7 +728,7 @@ $(document).ready(function () {
                                     // Принудительно обновляем данные из system_status.json через 2.5s
                                     // (учитываем задержку обновления status_monitor ~2s)
                                     setTimeout(() => {
-                                        console.log('Обновление данных после переключения плеера...');
+                                        debugLog('Обновление данных после переключения плеера...');
                                         updateStatusFromServer();
                                     }, 2500);
                                 } else if (checkCount >= maxChecks) {
@@ -942,7 +959,7 @@ $(document).ready(function () {
         let volumeControlsAvailable = true;
         let muteControlsAvailable = true;
         
-        console.log('Volume update:', data.volume, 'available:', data.volume_control_available, 'changing:', isVolumeChanging);
+        debugLog('Volume update:', data.volume, 'available:', data.volume_control_available, 'changing:', isVolumeChanging);
         
         if (data.volume_control_available !== undefined) {
             volumeControlsAvailable = data.volume_control_available;
@@ -1034,7 +1051,7 @@ $(document).ready(function () {
         .then(response => response.json())
         .then(data => {
             if (data.disabled) {
-                console.log('Volume control disabled:', data.reason);
+                debugLog('Volume control disabled:', data.reason);
                 isVolumeChanging = false;
                 return;
             }
@@ -1067,7 +1084,7 @@ $(document).ready(function () {
         .then(response => response.json())
         .then(data => {
             if (data.disabled) {
-                console.log('Mute control disabled:', data.reason);
+                debugLog('Mute control disabled:', data.reason);
                 isVolumeChanging = false;
                 return;
             }
@@ -1198,7 +1215,7 @@ $(document).ready(function () {
 
     // Check USBtoI2S status and lock toggle if enabled
     function checkUsbToI2sStatus() {
-        console.log("checkUsbToI2sStatus called");
+        debugLog("checkUsbToI2sStatus called");
         $.ajax({
             url: 'usb_to_i2s.php',
             method: 'POST',
@@ -1206,13 +1223,13 @@ $(document).ready(function () {
             dataType: 'json',
             timeout: 3000,
             success: function(response) {
-                console.log("checkUsbToI2sStatus response:", response);
+                debugLog("checkUsbToI2sStatus response:", response);
                 if (response.enabled) {
-                    console.log("ADDING active class to button");
+                    debugLog("ADDING active class to button");
                     $('#usbto-i2s-btn').addClass('active');
                     lockAlsaToggle();
                     updateAlsaUI('i2s');
-                    console.log("After addClass:", $('#usbto-i2s-btn').attr('class'));
+                    debugLog("After addClass:", $('#usbto-i2s-btn').attr('class'));
                 } else {
                     $('#usbto-i2s-btn').removeClass('active');
                 }
@@ -1461,7 +1478,7 @@ $(document).ready(function () {
             method: 'POST',
             body: formData
         }).then(() => {
-            console.log(`Applied submode: ${$(this).attr('value')}`);
+            debugLog(`Applied submode: ${$(this).attr('value')}`);
         }).catch(error => {
             console.error('Error applying submode:', error);
         });
@@ -1492,7 +1509,7 @@ $(document).ready(function () {
                 body: formData
             }).then(() => {
                 // Settings applied successfully
-                console.log(`Applied ${this.name}: ${this.value}`);
+                debugLog(`Applied ${this.name}: ${this.value}`);
             }).catch(error => {
                 console.error('Error applying setting:', error);
             });
@@ -1719,7 +1736,7 @@ $(document).ready(function () {
                 }
             },
             error: function() {
-                console.warn('DLNA bridge status unavailable');
+                debugWarn('DLNA bridge status unavailable');
                 // Keep localStorage state — bridge may still be running
             }
         });
@@ -1846,4 +1863,3 @@ $(document).ready(function () {
     initDlnaBridge();
 
 });
-/* Cache bust version: 1753367744 */

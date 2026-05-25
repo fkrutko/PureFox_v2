@@ -274,8 +274,14 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(function() {
-    $.getJSON('usb_to_i2s.php', { action: 'status' }, function(r) {
-      if (r.enabled) $('#usbto-i2s-btn').addClass('active');
+    $.ajax({
+      url: 'usb_to_i2s.php',
+      method: 'POST',
+      dataType: 'json',
+      data: { action: 'status' },
+      success: function(r) {
+        if (r.enabled) $('#usbto-i2s-btn').addClass('active');
+      }
     });
   }, 1000);
 });
