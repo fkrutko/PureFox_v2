@@ -74,14 +74,14 @@ echo "$SRC_BRANCH HEAD: $SRC_HEAD"
 echo "$DST_BRANCH HEAD: $DST_HEAD"
 
 echo "Step 2: Finding files that differ..."
-CHANGED_FILES=$(git diff --name-only "$DST_BRANCH" "$SRC_BRANCH")
+mapfile -d '' CHANGED_FILES < <(git diff -z --name-only "$DST_BRANCH" "$SRC_BRANCH")
 
 echo "Step 3: Filtering files (excluding Ultra-specific)..."
-FILES_TO_SYNC=""
+FILES_TO_SYNC=()
 SKIPPED_COUNT=0
 SYNCED_COUNT=0
 
-while IFS= read -r file; do
+for file in "${CHANGED_FILES[@]}"; do
     [ -z "$file" ] && continue
 
     SKIP=false
@@ -95,28 +95,28 @@ while IFS= read -r file; do
     done
 
     if [ "$SKIP" = false ]; then
-        FILES_TO_SYNC="$FILES_TO_SYNC $file"
+        FILES_TO_SYNC+=("$file")
         SYNCED_COUNT=$((SYNCED_COUNT + 1))
     fi
-done <<< "$CHANGED_FILES"
+done
 
 echo ""
 echo "Files to sync: $SYNCED_COUNT"
 echo "Files skipped: $SKIPPED_COUNT"
 echo ""
 
-if [ -z "$FILES_TO_SYNC" ]; then
+if [ ${#FILES_TO_SYNC[@]} -eq 0 ]; then
     echo "No files to sync!"
     git checkout "$SRC_BRANCH"
     exit 0
 fi
 
 echo "Step 4: Syncing files from $SRC_BRANCH..."
-for file in $FILES_TO_SYNC; do
+for file in "${FILES_TO_SYNC[@]}"; do
     if git cat-file -e "$SRC_BRANCH":"$file" 2>/dev/null; then
         echo "  [SYNC] $file"
         mkdir -p "$(dirname "$file")"
-        git checkout "$SRC_BRANCH" -- "$file"
+        git restore --source "$SRC_BRANCH" --staged --worktree -- "$file"
     else
         echo "  [DELETE] $file (removed in $SRC_BRANCH)"
         git rm -f "$file" 2>/dev/null || rm -f "$file"
