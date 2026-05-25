@@ -1226,6 +1226,7 @@ $(document).ready(function () {
                 debugLog("checkUsbToI2sStatus response:", response);
                 if (response.enabled) {
                     debugLog("ADDING active class to button");
+                    $('button[data-service]').removeClass('active');
                     $('#usbto-i2s-btn').addClass('active');
                     lockAlsaToggle();
                     updateAlsaUI('i2s');
@@ -1290,8 +1291,8 @@ $(document).ready(function () {
             showSpinner(translations[currentLang]['switching_output']);
 
             // Мгновенная активация кнопки
+            $('button[data-service]').removeClass('active');
             $('#usbto-i2s-btn').addClass('active');
-            $('.btn-custom').removeClass('active');
 
             $.ajax({
                         url: 'usb_to_i2s.php',
