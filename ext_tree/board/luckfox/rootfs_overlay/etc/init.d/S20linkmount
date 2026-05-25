@@ -160,6 +160,10 @@ case $1 in start) linkdev;
 mount_part rootfs IGNORE ubifs ;
 # For eMMC: ensure rootfs is expanded to full size
 if [ "$bootmedium" = "emmc" ]; then
+    # Mount boot partition for runtime access on eMMC targets
+    [ -d /boot ] || mkdir -p /boot
+    mount_part boot /boot ext4 || mount_part boot /boot ext2 || mount_part boot /boot vfat
+
     ROOT_DEV=$(mountpoint -n / | awk '{print $1}')
     if [ -n "$ROOT_DEV" ]; then
         resize2fs -f "$ROOT_DEV" 2>/dev/null || true
