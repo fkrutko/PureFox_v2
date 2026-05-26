@@ -39,7 +39,7 @@ PureFox is a firmware for **Luckfox Pico Max** and **Ultra** boards based on Roc
 
 The latest firmware is available at:
 
-- [MEGA](https://mega.nz/fm/v5YwHLBR) — official release
+- [MEGA](https://mega.nz/folder/jhJzXZKJ#Y6YbHsS9xCfJL4TKOVeQ4Q) — official release
 - [Yandex.Disk](https://disk.yandex.ru/d/g8tOCR7uFATj5Q) — mirror
 
 ### Installation (via USB)
