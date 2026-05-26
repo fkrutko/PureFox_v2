@@ -41,7 +41,7 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 
 Последняя версия прошивки доступна на:
 
-- [MEGA](https://mega.nz/fm/v5YwHLBR) — официальный релиз
+- [MEGA](https://mega.nz/folder/jhJzXZKJ#Y6YbHsS9xCfJL4TKOVeQ4Q) — официальный релиз
 - [Яндекс.Диск](https://disk.yandex.ru/d/g8tOCR7uFATj5Q) — зеркало
 
 ### Установка (через USB)
