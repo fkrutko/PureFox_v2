@@ -72,6 +72,7 @@ $(document).ready(function () {
             'settings': '',
             'switching_player': 'Переключение плеера...',
             'switching_output': 'Переключение выхода...',
+            'switching_input': 'Переключение входа...',
             'usb_dac_missing': 'USB ЦАП не обнаружен.<br>Пожалуйста, подключите USB ЦАП',
             'confirm_reboot': 'Вы уверены, что хотите перезагрузить систему?',
             'confirm_shutdown': 'Вы уверены, что хотите выключить систему?',
@@ -118,6 +119,7 @@ $(document).ready(function () {
             'settings': '',
             'switching_player': 'Switching player...',
             'switching_output': 'Switching output...',
+            'switching_input': 'Switching input...',
             'usb_dac_missing': 'USB DAC not detected.<br>Please connect USB DAC',
             'confirm_reboot': 'Are you sure you want to reboot the system?',
             'confirm_shutdown': 'Are you sure you want to shutdown the system?',
@@ -164,6 +166,7 @@ $(document).ready(function () {
             'settings': '',
             'switching_player': 'Player wird gewechselt...',
             'switching_output': 'Ausgang wird gewechselt...',
+            'switching_input': 'Eingang wird gewechselt...',
             'usb_dac_missing': 'USB-DAC nicht erkannt.<br>Bitte USB-DAC anschließen',
             'confirm_reboot': 'Sind Sie sicher, dass Sie das System neu starten möchten?',
             'confirm_shutdown': 'Sind Sie sicher, dass Sie das System herunterfahren möchten?',
@@ -210,6 +213,7 @@ $(document).ready(function () {
             'settings': '',
             'switching_player': 'Changement de lecteur...',
             'switching_output': 'Changement de sortie...',
+            'switching_input': 'Changement d\'entrée...',
             'usb_dac_missing': 'DAC USB non détecté.<br>Veuillez connecter un DAC USB',
             'confirm_reboot': 'Êtes-vous sûr de vouloir redémarrer le système?',
             'confirm_shutdown': 'Êtes-vous sûr de vouloir arrêter le système?',
@@ -256,6 +260,7 @@ $(document).ready(function () {
             'settings': '',
             'switching_player': '正在切换播放器...',
             'switching_output': '正在切换输出...',
+            'switching_input': '正在切换输入...',
             'usb_dac_missing': '未检测到 USB DAC。<br>请连接 USB DAC',
             'confirm_reboot': '您确定要重启系统吗？',
             'confirm_shutdown': '您确定要关闭系统吗？',
@@ -1259,7 +1264,7 @@ $(document).ready(function () {
             customConfirm(confirmDisable[currentLang] || confirmDisable['en'], function(confirmed) {
                 if (confirmed) {
                     isAlsaSwitching = true;
-                    showSpinner(translations[currentLang]['switching_output']);
+                    showSpinner(translations[currentLang]['switching_input']);
 
                     // Мгновенная деактивация кнопки
                     $('#usbto-i2s-btn').removeClass('active');
@@ -1288,7 +1293,7 @@ $(document).ready(function () {
         } else {
             // Enable mode
             isAlsaSwitching = true;
-            showSpinner(translations[currentLang]['switching_output']);
+            showSpinner(translations[currentLang]['switching_input']);
 
             // Мгновенная активация кнопки
             $('button[data-service]').removeClass('active');
