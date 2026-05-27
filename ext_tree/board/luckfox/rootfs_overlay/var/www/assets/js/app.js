@@ -417,8 +417,6 @@ $(document).ready(function () {
 
     function hideSpinner() {
         $('.spinner-overlay').removeClass('show');
-        // Restore original text
-        $('.spinner-text').text(translations[currentLang]['switching_player']);
     }
 
     // Check USB DAC via forced status check
