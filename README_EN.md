@@ -28,7 +28,7 @@ PureFox is a firmware for **Luckfox Pico Max** and **Ultra** boards based on Roc
 | ------------------ | ------------------------- |
 | Processor          | Rockchip RV1106           |
 | Linux Kernel       | 6.1                       |
-| Power Consumption  | 200–250 mA                |
+| Power Consumption  | 80–120 mA                |
 | Storage            | SPI NOR Flash or eMMC     |
 | Power Supply       | 5V via USB Type-C         |
 | Outputs            | I2S (EXT/PLL), USB (UAC2) |
