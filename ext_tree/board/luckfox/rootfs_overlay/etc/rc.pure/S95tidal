@@ -8,6 +8,7 @@ start() {
     echo "Starting PureFox Tidal Connect..."
     if [ -f /opt/tidal.sqfs ] && ! mountpoint -q /opt/tidal; then
         mkdir -p /opt/tidal && mount -t squashfs -o loop,ro /opt/tidal.sqfs /opt/tidal
+        sleep 0.1
     fi
     export LD_LIBRARY_PATH=/opt/tidal
     export LD_PRELOAD=/opt/tidal/libdns_sd.so
