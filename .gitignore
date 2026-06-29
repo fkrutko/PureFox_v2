@@ -12,6 +12,7 @@ buildroot/*.diff
 *~
 *.pyc
 .claude
+.deepseek
 AGENTS.md
 
 
