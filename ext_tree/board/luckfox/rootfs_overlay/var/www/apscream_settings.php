@@ -267,7 +267,7 @@ header('Content-Type: text/html; charset=UTF-8');
 
         <div class="form-group">
           <label for="tcp-mode">TCP_MODE:</label>
-          <select id="tcp-mode" name="TCP_MODE" disabled>
+          <select id="tcp-mode" name="TCP_MODE">
             <option value="0">0 - Disabled</option>
             <option value="1">1 - Enabled</option>
           </select>
