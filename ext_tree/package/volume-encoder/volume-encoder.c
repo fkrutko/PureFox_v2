@@ -1,6 +1,8 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <alsa/asoundlib.h>
+#include <dbus/dbus.h>
 #include <linux/input.h>
 #include <limits.h>
 #include <poll.h>
@@ -14,52 +16,117 @@
 
 #define EVENT_MAX 32
 #define SAVE_DELAY_MS 1000
+#define NOTIFY_DELAY_MS 75
+
+#define DBUS_OBJECT_PATH "/org/purefox/statusmonitor"
+#define DBUS_INTERFACE_NAME "org.purefox.StatusMonitor"
 
 static volatile sig_atomic_t running = 1;
 
 static void stop(int sig) { (void)sig; running = 0; }
 
+static int open_pcm_mixer(snd_mixer_t **mixer, snd_mixer_elem_t **elem)
+{
+	snd_mixer_selem_id_t *id;
+
+	*mixer = NULL;
+	*elem = NULL;
+	if (snd_mixer_open(mixer, 0) < 0 ||
+	    snd_mixer_attach(*mixer, "default") < 0 ||
+	    snd_mixer_selem_register(*mixer, NULL, NULL) < 0 ||
+	    snd_mixer_load(*mixer) < 0)
+		goto error;
+
+	snd_mixer_selem_id_alloca(&id);
+	snd_mixer_selem_id_set_name(id, "PCM");
+	*elem = snd_mixer_find_selem(*mixer, id);
+	if (*elem && snd_mixer_selem_has_playback_volume(*elem))
+		return 0;
+
+error:
+	if (*mixer)
+		snd_mixer_close(*mixer);
+	*mixer = NULL;
+	return -1;
+}
+
 static int get_volume(void)
 {
-	FILE *pipe = popen("/usr/bin/amixer sget PCM 2>/dev/null", "r");
-	char line[256];
+	snd_mixer_t *mixer;
+	snd_mixer_elem_t *elem;
+	long min, max, value;
 	int volume = 100;
 
-	if (!pipe)
+	if (open_pcm_mixer(&mixer, &elem) < 0)
 		return volume;
-	while (fgets(line, sizeof(line), pipe)) {
-		char *start = strchr(line, '[');
-		if (start && sscanf(start, "[%d%%]", &volume) == 1)
-			break;
-	}
-	pclose(pipe);
+	snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
+	if (max > min &&
+	    snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_MONO,
+					 &value) >= 0)
+		volume = (int)((value - min) * 100 / (max - min));
+	snd_mixer_close(mixer);
 	return volume < 0 ? 0 : volume > 100 ? 100 : volume;
 }
 
 static void set_volume(int volume)
 {
-	char command[96];
+	snd_mixer_t *mixer;
+	snd_mixer_elem_t *elem;
+	long min, max, value;
 
 	if (volume < 0)
 		volume = 0;
 	if (volume > 100)
 		volume = 100;
-	snprintf(command, sizeof(command), "/usr/bin/amixer -q sset PCM %d%%", volume);
-	if (system(command) == -1)
+	if (open_pcm_mixer(&mixer, &elem) < 0)
 		return;
+	snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
+	value = min + (max - min) * volume / 100;
+	snd_mixer_selem_set_playback_volume_all(elem, value);
+	snd_mixer_close(mixer);
 }
 
 static void notify_status(void)
 {
-	if (system("/opt/dbus_notify VolumeChanged encoder 2>/dev/null &") == -1)
+	static DBusConnection *connection;
+	DBusMessage *message;
+	DBusError error;
+	const char *source = "encoder";
+
+	if (!connection) {
+		dbus_error_init(&error);
+		connection = dbus_bus_get(DBUS_BUS_SYSTEM, &error);
+		if (dbus_error_is_set(&error)) {
+			dbus_error_free(&error);
+			return;
+		}
+		if (!connection)
+			return;
+	}
+	message = dbus_message_new_signal(DBUS_OBJECT_PATH,
+					 DBUS_INTERFACE_NAME, "VolumeChanged");
+	if (!message)
 		return;
+	dbus_message_append_args(message, DBUS_TYPE_STRING, &source,
+				 DBUS_TYPE_INVALID);
+	dbus_connection_send(connection, message, NULL);
+	dbus_connection_flush(connection);
+	dbus_message_unref(message);
 }
 
 static void toggle_mute(void)
 {
-	if (system("/usr/bin/amixer -q sset PCM toggle") == -1)
+	snd_mixer_t *mixer;
+	snd_mixer_elem_t *elem;
+	int enabled;
+
+	if (open_pcm_mixer(&mixer, &elem) < 0)
 		return;
-	notify_status();
+	if (snd_mixer_selem_has_playback_switch(elem) &&
+	    snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_MONO,
+					    &enabled) >= 0)
+		snd_mixer_selem_set_playback_switch_all(elem, !enabled);
+	snd_mixer_close(mixer);
 }
 
 static void save_volume(int volume)
@@ -96,8 +163,8 @@ static int open_event(const char *name)
 int main(void)
 {
 	struct pollfd fds[EVENT_MAX];
-	int count = 0, volume = get_volume(), dirty = 0;
-	long long save_at = 0;
+	int count = 0, volume = get_volume(), dirty = 0, notify_pending = 0;
+	long long save_at = 0, notify_at = 0;
 	DIR *dir;
 	struct dirent *entry;
 
@@ -119,10 +186,19 @@ int main(void)
 
 	while (running) {
 		struct timespec now;
-		int timeout = dirty ? SAVE_DELAY_MS : -1;
-		int ready = poll(fds, count, timeout);
+		long long deadline = 0;
+		int timeout;
+
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		long long ms = now.tv_sec * 1000LL + now.tv_nsec / 1000000;
+		if (dirty)
+			deadline = save_at;
+		if (notify_pending && (!deadline || notify_at < deadline))
+			deadline = notify_at;
+		timeout = deadline ? (int)(deadline > ms ? deadline - ms : 0) : -1;
+		int ready = poll(fds, count, timeout);
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		ms = now.tv_sec * 1000LL + now.tv_nsec / 1000000;
 
 		if (ready > 0) {
 			for (int i = 0; i < count; i++) {
@@ -136,11 +212,14 @@ int main(void)
 						if (volume > 100)
 							volume = 100;
 						set_volume(volume);
-						notify_status();
 						dirty = 1;
 						save_at = ms + SAVE_DELAY_MS;
+						notify_pending = 1;
+						notify_at = ms + NOTIFY_DELAY_MS;
 					} else if (event.type == EV_KEY && event.code == KEY_MUTE && event.value) {
 						toggle_mute();
+						notify_pending = 1;
+						notify_at = ms;
 					}
 				}
 			}
@@ -148,6 +227,10 @@ int main(void)
 		if (dirty && ms >= save_at) {
 			save_volume(volume);
 			dirty = 0;
+		}
+		if (notify_pending && ms >= notify_at) {
+			notify_status();
+			notify_pending = 0;
 		}
 	}
 	if (dirty)

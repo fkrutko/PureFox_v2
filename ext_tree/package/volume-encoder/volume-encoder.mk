@@ -1,10 +1,13 @@
 VOLUME_ENCODER_VERSION = 1.0
 VOLUME_ENCODER_SITE_METHOD = local
 VOLUME_ENCODER_SITE = $(TOPDIR)/../ext_tree/package/volume-encoder
+VOLUME_ENCODER_DEPENDENCIES = alsa-lib dbus
 
 define VOLUME_ENCODER_BUILD_CMDS
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -Wall -Wextra -O2 -s \
-		-o $(@D)/volume-encoder $(@D)/volume-encoder.c
+		`$(PKG_CONFIG_HOST_BINARY) --cflags dbus-1` \
+		-o $(@D)/volume-encoder $(@D)/volume-encoder.c \
+		-lasound `$(PKG_CONFIG_HOST_BINARY) --libs dbus-1`
 endef
 
 define VOLUME_ENCODER_INSTALL_TARGET_CMDS
