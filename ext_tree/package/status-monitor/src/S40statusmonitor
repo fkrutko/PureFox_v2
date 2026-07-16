@@ -6,8 +6,7 @@ PIDFILE="/tmp/status_monitor.lock"
 
 start() {
     printf "Starting $DAEMON: "
-    
-    # Check if already running
+
     if [ -f $PIDFILE ]; then
         PID=$(cat $PIDFILE)
         if kill -0 $PID 2>/dev/null; then
@@ -16,7 +15,7 @@ start() {
         fi
         rm -f $PIDFILE
     fi
-    
+
     cd $DAEMON_PATH
     start-stop-daemon -S -q -b -m -p $PIDFILE --exec ./$DAEMON
     [ $? = 0 ] && echo "OK" || echo "FAIL"

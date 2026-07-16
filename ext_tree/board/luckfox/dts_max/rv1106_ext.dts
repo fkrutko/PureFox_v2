@@ -16,6 +16,42 @@
 	nvmem-cell-names = "serial-number";
 	serial-number;
 
+	volume_encoder: volume-encoder {
+		compatible = "rotary-encoder";
+		label = "PureFox Volume Encoder";
+		pinctrl-names = "default";
+		pinctrl-0 = <&volume_encoder_pins>;
+		gpios = <&gpio1 RK_PC6 GPIO_ACTIVE_LOW>, <&gpio1 RK_PC7 GPIO_ACTIVE_LOW>;
+		linux,axis = <7>;
+		rotary-encoder,encoding = "gray";
+		rotary-encoder,relative-axis;
+		rotary-encoder,steps-per-period = <1>;
+	};
+
+	volume_encoder_keys: volume-encoder-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&volume_mute_pins>;
+		mute {
+			label = "Volume Mute";
+			linux,code = <113>;
+			gpios = <&gpio1 RK_PC5 GPIO_ACTIVE_LOW>;
+			debounce-interval = <20>;
+		};
+	};
+};
+
+&pinctrl {
+	volume_encoder {
+		volume_encoder_pins: volume-encoder-pins {
+			rockchip,pins = <1 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>,
+					<1 RK_PC7 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		volume_mute_pins: volume-mute-pins {
+			rockchip,pins = <1 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
 };
 
 /*********I2S*************/

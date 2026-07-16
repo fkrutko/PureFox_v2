@@ -56,6 +56,23 @@ function getSystemStatus() {
     ];
 }
 
+function saveVolume($control) {
+    exec('/usr/bin/amixer sget ' . escapeshellarg($control) . ' 2>/dev/null', $output, $return_code);
+    if ($return_code !== 0) {
+        return;
+    }
+
+    if (preg_match('/\[(\d+)%\]/', implode(' ', $output), $matches)) {
+        $volume = intval($matches[1]);
+        if ($volume >= 0 && $volume <= 100) {
+            $temporary = '/data/i2s_volume.tmp';
+            if (file_put_contents($temporary, $volume . "\n", LOCK_EX) !== false) {
+                rename($temporary, '/data/i2s_volume');
+            }
+        }
+    }
+}
+
 $action = $_POST['action'] ?? '';
 $control = getCachedControl();
 $system_status = getSystemStatus();
@@ -74,6 +91,7 @@ switch ($action) {
         shell_exec('/usr/bin/killall -USR1 dbus_monitor 2>/dev/null &');
         
         if ($return_code === 0) {
+            saveVolume($control);
             echo json_encode(['success' => true]);
         } else {
             http_response_code(500);
@@ -94,6 +112,7 @@ switch ($action) {
         shell_exec('/usr/bin/killall -USR1 dbus_monitor 2>/dev/null &');
         
         if ($return_code === 0) {
+            saveVolume($control);
             echo json_encode(['success' => true]);
         } else {
             http_response_code(500);
@@ -126,6 +145,7 @@ switch ($action) {
             shell_exec('/usr/bin/killall -USR1 dbus_monitor 2>/dev/null &');
             
             if ($return_code === 0) {
+                saveVolume($control);
                 echo json_encode(['success' => true]);
             } else {
                 http_response_code(500);

@@ -10,6 +10,9 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <alsa/asoundlib.h>
 #include <dbus/dbus.h>
 
@@ -19,12 +22,157 @@
 #define DBUS_SERVICE_NAME "org.purefox.statusmonitor"
 #define DBUS_OBJECT_PATH "/org/purefox/statusmonitor"
 #define DBUS_INTERFACE_NAME "org.purefox.StatusMonitor"
+#define EVENT_SOCKET "/tmp/status_monitor_events.sock"
+#define EVENT_CLIENTS_MAX 4
+#define VOLUME_SAVE_DELAY_MS 1000
 
 volatile int running = 1;
 DBusConnection *dbus_conn = NULL;
+static int event_server = -1;
+static int event_clients[EVENT_CLIENTS_MAX] = { -1, -1, -1, -1 };
+static char status_json[512];
+static snd_mixer_t *volume_event_mixer;
+static int pending_volume_persist = -1;
+static long long volume_persist_at;
+
+void update_status_file(void);
 
 void signal_handler(int sig) {
     running = 0;
+}
+
+static void close_event_client(int index)
+{
+    close(event_clients[index]);
+    event_clients[index] = -1;
+}
+
+static void publish_status(void)
+{
+    int i;
+
+    for (i = 0; i < EVENT_CLIENTS_MAX; i++) {
+        ssize_t written;
+
+        if (event_clients[i] < 0)
+            continue;
+        written = send(event_clients[i], status_json, strlen(status_json), MSG_NOSIGNAL);
+        if (written != (ssize_t)strlen(status_json))
+            close_event_client(i);
+    }
+}
+
+static int init_event_server(void)
+{
+    struct sockaddr_un address;
+    int flags;
+
+    event_server = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (event_server < 0)
+        return -1;
+    flags = fcntl(event_server, F_GETFL, 0);
+    if (flags < 0 || fcntl(event_server, F_SETFL, flags | O_NONBLOCK) < 0)
+        goto error;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    strncpy(address.sun_path, EVENT_SOCKET, sizeof(address.sun_path) - 1);
+    unlink(EVENT_SOCKET);
+    if (bind(event_server, (struct sockaddr *)&address, sizeof(address)) < 0)
+        goto error;
+    if (chmod(EVENT_SOCKET, 0666) < 0 || listen(event_server, EVENT_CLIENTS_MAX) < 0)
+        goto error;
+    return 0;
+
+error:
+    close(event_server);
+    event_server = -1;
+    unlink(EVENT_SOCKET);
+    return -1;
+}
+
+static void service_event_clients(void)
+{
+    int i, flags;
+
+    if (event_server >= 0) {
+        for (;;) {
+            int client = accept(event_server, NULL, NULL);
+
+            if (client < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK)
+                    perror("status event accept");
+                break;
+            }
+            flags = fcntl(client, F_GETFL, 0);
+            if (flags < 0 || fcntl(client, F_SETFL, flags | O_NONBLOCK) < 0) {
+                close(client);
+                continue;
+            }
+            for (i = 0; i < EVENT_CLIENTS_MAX; i++) {
+                if (event_clients[i] < 0) {
+                    event_clients[i] = client;
+                    if (status_json[0] &&
+                        send(client, status_json, strlen(status_json), MSG_NOSIGNAL) !=
+                            (ssize_t)strlen(status_json))
+                        close_event_client(i);
+                    break;
+                }
+            }
+            if (i == EVENT_CLIENTS_MAX)
+                close(client);
+        }
+    }
+    for (i = 0; i < EVENT_CLIENTS_MAX; i++) {
+        struct pollfd client_poll = { .fd = event_clients[i], .events = 0 };
+
+        if (event_clients[i] >= 0 && poll(&client_poll, 1, 0) > 0 &&
+            (client_poll.revents & (POLLERR | POLLHUP | POLLNVAL)))
+            close_event_client(i);
+    }
+}
+
+static bool have_event_clients(void)
+{
+    int i;
+
+    for (i = 0; i < EVENT_CLIENTS_MAX; i++) {
+        if (event_clients[i] >= 0)
+            return true;
+    }
+    return false;
+}
+
+static long long monotonic_ms(void)
+{
+    struct timespec now;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec * 1000LL + now.tv_nsec / 1000000;
+}
+
+static void schedule_volume_persist(const char *volume)
+{
+    int value;
+
+    if (sscanf(volume, "%d%%", &value) != 1 || value < 0 || value > 100)
+        return;
+    pending_volume_persist = value;
+    volume_persist_at = monotonic_ms() + VOLUME_SAVE_DELAY_MS;
+}
+
+static void persist_pending_volume(void)
+{
+    FILE *file;
+
+    if (pending_volume_persist < 0 || monotonic_ms() < volume_persist_at)
+        return;
+    file = fopen("/data/i2s_volume.status.tmp", "w");
+    if (!file)
+        return;
+    fprintf(file, "%d\n", pending_volume_persist);
+    fclose(file);
+    if (!rename("/data/i2s_volume.status.tmp", "/data/i2s_volume"))
+        pending_volume_persist = -1;
 }
 
 // Structure for storing current state
@@ -326,6 +474,67 @@ void get_volume_status_alsa(char* volume, int* muted) {
     snd_mixer_close(handle);
 }
 
+static void reset_volume_event_mixer(void)
+{
+    if (volume_event_mixer) {
+        snd_mixer_close(volume_event_mixer);
+        volume_event_mixer = NULL;
+    }
+}
+
+static bool init_volume_event_mixer(void)
+{
+    if (volume_event_mixer)
+        return true;
+    if (snd_mixer_open(&volume_event_mixer, 0) < 0)
+        return false;
+    if (snd_mixer_attach(volume_event_mixer, "default") < 0 ||
+        snd_mixer_selem_register(volume_event_mixer, NULL, NULL) < 0 ||
+        snd_mixer_load(volume_event_mixer) < 0) {
+        reset_volume_event_mixer();
+        return false;
+    }
+    return true;
+}
+
+static bool wait_for_volume_event(int timeout_ms)
+{
+    int ret;
+
+    if (!init_volume_event_mixer())
+        return false;
+    ret = snd_mixer_wait(volume_event_mixer, timeout_ms);
+    if (ret <= 0) {
+        if (ret < 0)
+            reset_volume_event_mixer();
+        return false;
+    }
+    if (snd_mixer_handle_events(volume_event_mixer) < 0) {
+        reset_volume_event_mixer();
+        return false;
+    }
+    return true;
+}
+
+static void refresh_volume_status_if_changed(time_t now)
+{
+    char old_volume[16];
+    int old_muted = current_status.muted;
+    bool volume_changed;
+
+    strcpy(old_volume, current_status.volume);
+    get_volume_status_alsa(current_status.volume, &current_status.muted);
+    volume_changed = strcmp(old_volume, current_status.volume) != 0;
+    if (volume_changed || old_muted != current_status.muted) {
+        printf("Volume changed: %s (muted: %s)\n", current_status.volume,
+               current_status.muted ? "yes" : "no");
+        current_status.last_update = now;
+        update_status_file();
+    }
+    if (volume_changed)
+        schedule_volume_persist(current_status.volume);
+}
+
 // Check USB DAC control availability using ALSA API
 void check_usb_controls(int* volume_available, int* mute_available) {
     *volume_available = 0;
@@ -398,22 +607,24 @@ void update_status_file() {
         return;
     }
     
-    fprintf(fp, "{\n");
-    fprintf(fp, "  \"active_service\": \"%s\",\n", current_status.active_service);
-    fprintf(fp, "  \"alsa_state\": \"%s\",\n", current_status.alsa_state);
-    fprintf(fp, "  \"usb_dac\": %s,\n", current_status.usb_dac ? "true" : "false");
-    fprintf(fp, "  \"volume\": \"%s\",\n", current_status.volume);
-    fprintf(fp, "  \"muted\": %s,\n", current_status.muted ? "true" : "false");
-    fprintf(fp, "  \"volume_control_available\": %s,\n", current_status.volume_control_available ? "true" : "false");
-    fprintf(fp, "  \"mute_control_available\": %s,\n", current_status.mute_control_available ? "true" : "false");
-    fprintf(fp, "  \"timestamp\": %ld,\n", current_status.last_update);
-    fprintf(fp, "  \"source\": \"dbus_monitor\"\n");
-    fprintf(fp, "}\n");
+    snprintf(status_json, sizeof(status_json),
+             "{\"active_service\":\"%s\",\"alsa_state\":\"%s\","
+             "\"usb_dac\":%s,\"volume\":\"%s\",\"muted\":%s,"
+             "\"volume_control_available\":%s,\"mute_control_available\":%s,"
+             "\"timestamp\":%ld,\"source\":\"dbus_monitor\"}\n",
+             current_status.active_service, current_status.alsa_state,
+             current_status.usb_dac ? "true" : "false", current_status.volume,
+             current_status.muted ? "true" : "false",
+             current_status.volume_control_available ? "true" : "false",
+             current_status.mute_control_available ? "true" : "false",
+             current_status.last_update);
+    fputs(status_json, fp);
     
     fclose(fp);
     
     // Also update mixer cache
     update_mixer_cache();
+    publish_status();
 }
 
 // Full status update
@@ -440,6 +651,7 @@ void refresh_all_status() {
         // Invalidate cached control and force rescan
         current_status.mixer_control_valid = false;
         find_mixer_control();
+        reset_volume_event_mixer();
     }
     
     get_volume_status_alsa(current_status.volume, &current_status.muted);
@@ -495,6 +707,7 @@ DBusHandlerResult handle_dbus_message(DBusConnection *connection, DBusMessage *m
                 // Invalidate cache and rescan
                 current_status.mixer_control_valid = false;
                 find_mixer_control();
+                reset_volume_event_mixer();
                 
                 // Recalculate control availability
                 if (strcmp(current_status.alsa_state, "usb") == 0 && !current_status.usb_dac) {
@@ -576,38 +789,50 @@ int main() {
     }
     
     printf("D-Bus Status Monitor started (PID: %d)\n", getpid());
+    if (init_event_server() < 0)
+        printf("WARNING: Status event socket is unavailable: %s\n", strerror(errno));
     
     if (init_dbus() < 0) {
-        printf("Failed to initialize D-Bus, falling back to polling mode\n");
+        static time_t last_full_refresh = 0;
+        static long long last_volume_poll = 0;
+
+        printf("Failed to initialize D-Bus, using ALSA event fallback\n");
+        refresh_all_status();
         while (running) {
-            refresh_all_status();
-            sleep(2);
+            service_event_clients();
+            if (wait_for_volume_event(200))
+                refresh_volume_status_if_changed(time(NULL));
+            if (monotonic_ms() - last_volume_poll >=
+                (have_event_clients() ? 250 : 1000)) {
+                refresh_volume_status_if_changed(time(NULL));
+                last_volume_poll = monotonic_ms();
+            }
+            persist_pending_volume();
+            if (time(NULL) - last_full_refresh > 30) {
+                refresh_all_status();
+                last_full_refresh = time(NULL);
+            }
         }
     } else {
         refresh_all_status();
         
         printf("Entering D-Bus event loop\n");
         while (running) {
-            dbus_connection_read_write_dispatch(dbus_conn, 1000);
-            
-            static time_t last_alsa_check = 0;
+            dbus_connection_read_write_dispatch(dbus_conn, 100);
+            service_event_clients();
             static time_t last_full_refresh = 0;
+            static long long last_volume_poll = 0;
             time_t now = time(NULL);
-            
-            if (now - last_alsa_check > 1) {
-                char old_volume[16];
-                int old_muted = current_status.muted;
-                strcpy(old_volume, current_status.volume);
-                
-                get_volume_status_alsa(current_status.volume, &current_status.muted);
-                
-                if (strcmp(old_volume, current_status.volume) != 0 || old_muted != current_status.muted) {
-                    printf("Volume changed: %s (muted: %s)\n", current_status.volume, current_status.muted ? "yes" : "no");
-                    current_status.last_update = now;
-                    update_status_file();
-                }
-                last_alsa_check = now;
+
+            if (wait_for_volume_event(100))
+                refresh_volume_status_if_changed(now);
+
+            if (monotonic_ms() - last_volume_poll >=
+                (have_event_clients() ? 250 : 1000)) {
+                refresh_volume_status_if_changed(now);
+                last_volume_poll = monotonic_ms();
             }
+            persist_pending_volume();
             
             if (now - last_full_refresh > 30) {
                 refresh_all_status();
@@ -621,6 +846,17 @@ int main() {
     }
     
     unlink(LOCK_FILE);
+    for (int i = 0; i < EVENT_CLIENTS_MAX; i++) {
+        if (event_clients[i] >= 0)
+            close_event_client(i);
+    }
+    if (event_server >= 0)
+        close(event_server);
+    if (pending_volume_persist >= 0)
+        volume_persist_at = 0;
+    persist_pending_volume();
+    reset_volume_event_mixer();
+    unlink(EVENT_SOCKET);
     printf("D-Bus Status Monitor stopped\n");
     
     return 0;

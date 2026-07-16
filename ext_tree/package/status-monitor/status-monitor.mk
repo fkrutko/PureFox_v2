@@ -39,7 +39,8 @@ define STATUS_MONITOR_INSTALL_TARGET_CMDS
     $(INSTALL) -m 755 $(@D)/status_monitor $(TARGET_DIR)/opt/
     $(INSTALL) -m 755 $(@D)/dbus_notify $(TARGET_DIR)/opt/
     $(INSTALL) -d $(TARGET_DIR)/etc/init.d
-    $(INSTALL) -m 755 $(@D)/S01statusmonitor $(TARGET_DIR)/etc/init.d/
+    $(RM) -f $(TARGET_DIR)/etc/init.d/S01statusmonitor
+    $(INSTALL) -m 755 $(@D)/S40statusmonitor $(TARGET_DIR)/etc/init.d/
 endef
 
 $(eval $(generic-package))

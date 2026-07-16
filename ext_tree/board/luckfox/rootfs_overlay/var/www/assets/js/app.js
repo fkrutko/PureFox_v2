@@ -1,9 +1,4 @@
 $(document).ready(function () {
-    // Polling system configuration
-    const POLLING_CONFIG = {
-        NORMAL_INTERVAL: 3000    // 3 seconds normal interval
-    };
-
     // Global variables
     let lastKnownStatus = null;
     let isServiceSwitching = false; // Flag to block updates during switching
@@ -11,6 +6,8 @@ $(document).ready(function () {
     let isVolumeChanging = false; // Flag to block volume updates during user changes
     let isAlsaSwitching = false; // Flag to block ALSA updates during switching
     let statusInterval = null;
+    let statusEvents = null;
+    let statusEventsConnected = false;
     let isDlnaBridgeActive = false; // true when DLNA bridge is enabled
     const DEBUG_UI = new URLSearchParams(window.location.search).get('debug') === '1';
     const debugLog = (...args) => { if (DEBUG_UI) console.log(...args); };
@@ -397,6 +394,27 @@ $(document).ready(function () {
                 console.error('Status refresh failed:', status, error);
             }
         });
+    }
+
+    function startStatusEvents() {
+        if (!window.EventSource || statusEvents) {
+            return;
+        }
+
+        statusEvents = new EventSource('status_events.php');
+        statusEvents.addEventListener('status', function(event) {
+            try {
+                const response = JSON.parse(event.data);
+                statusEventsConnected = true;
+                lastKnownStatus = response;
+                updateInterfaceFromStatus(response);
+            } catch (error) {
+                debugWarn('Invalid status event:', error);
+            }
+        });
+        statusEvents.onerror = function() {
+            statusEventsConnected = false;
+        };
     }
 
     // Track page visibility
@@ -1159,31 +1177,26 @@ $(document).ready(function () {
         if (statusInterval) {
             clearInterval(statusInterval);
         }
+        if (statusEvents) {
+            statusEvents.close();
+        }
     });
     
     // Инициализация polling системы
     function startPolling() {
-        // Первая проверка статуса
         forceStatusCheck();
-        
-        // Регулярный polling каждые 3 секунды
+        startStatusEvents();
+
+        // SSE delivers state changes immediately. This is only a recovery path
+        // when the event connection is temporarily unavailable.
         statusInterval = setInterval(function() {
-            if (!isServiceSwitching && !isVolumeChanging && !isAlsaSwitching) {
-                $.ajax({
-                    url: 'status_fast.php',
-                    method: 'GET',
-                    timeout: 3000,
-                    dataType: 'json',
-                    success: function(response) {
-                        updateInterfaceFromStatus(response);
-                    }
-                });
+            if (!statusEventsConnected) {
+                forceStatusCheck();
             }
-        }, POLLING_CONFIG.NORMAL_INTERVAL);
+        }, 30000);
     }
     
-    // Запускаем polling через 2 секунды после загрузки
-    setTimeout(startPolling, 2000);
+    startPolling();
 
     // ===== USBtoI2S BUTTON FUNCTIONALITY =====
     const USBTOI2S_LOCK_KEY = 'usbToI2sLocked';

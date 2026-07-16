@@ -17,4 +17,5 @@ menu "Custom packages"
 	source "../ext_tree/package/nfqws2/Config.in"
 	source "../ext_tree/package/doh-proxy/Config.in"
 	source "../ext_tree/package/rinetd/Config.in"
+	source "../ext_tree/package/volume-encoder/Config.in"
 endmenu

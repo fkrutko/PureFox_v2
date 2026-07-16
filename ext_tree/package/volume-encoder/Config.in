@@ -1,0 +1,4 @@
+config BR2_PACKAGE_VOLUME_ENCODER
+	bool "volume-encoder"
+	help
+	  Maps the PureFox rotary encoder input to the I2S ALSA volume control.
