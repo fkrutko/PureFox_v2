@@ -1,0 +1,83 @@
+#!/bin/sh
+# Geo-check + hosts setup for Qobuz proxy (background only)
+
+(
+    VPS="${QOBUZ_VPS:-31.58.85.201}"
+    VPS_PORT="${QOBUZ_VPS_PORT:-8443}"
+    HOSTS_LINK="/etc/hosts"
+    HOSTS_RU="/etc/hosts.ru"
+    HOSTS_WORLD="/etc/hosts.world"
+    PIDFILE="/tmp/qobuz_geo.pid"
+    TARGETFILE="/tmp/qobuz_proxy_target"
+
+    get_country_code() {
+        wget -qO- --timeout=2 -T2 http://ip-api.com/line?fields=countryCode 2>/dev/null
+    }
+
+    is_proxy_country() {
+        case "$1" in
+            RU|AE) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    set_hosts_link() {
+        target="$1"
+        current_target=$(readlink "$HOSTS_LINK" 2>/dev/null)
+
+        [ "$current_target" = "$target" ] && return 0
+        ln -sfn "$target" "$HOSTS_LINK"
+    }
+
+    start_qobuz_proxy_if_running() {
+        [ "$BLOCKED" = "1" ] || return 0
+        pidof qobuz-connect >/dev/null 2>&1 || return 0
+
+        killall rinetd tinyproxy 2>/dev/null
+        /bin/sh -c 'renice 15 $$ >/dev/null 2>&1; exec /usr/sbin/rinetd 127.0.0.1 443 "$1" "$2"' sh \
+            "$VPS" "$VPS_PORT" >/dev/null 2>&1 &
+        /bin/sh -c 'renice 15 $$ >/dev/null 2>&1; exec tinyproxy -c /etc/tinyproxy.conf' \
+            >/dev/null 2>&1 &
+    }
+
+    if [ -f "$PIDFILE" ]; then
+        oldpid="$(cat "$PIDFILE" 2>/dev/null)"
+        if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+            exit 0
+        fi
+    fi
+
+    echo "$$" > "$PIDFILE"
+    trap 'rm -f "$PIDFILE"' EXIT
+
+    attempts=0
+    while :; do
+        BLOCKED=0
+        HOSTS_TARGET="$HOSTS_WORLD"
+        COUNTRY_CODE="$(get_country_code)"
+
+        if [ -n "$COUNTRY_CODE" ]; then
+            if is_proxy_country "$COUNTRY_CODE"; then
+                BLOCKED=1
+                HOSTS_TARGET="$HOSTS_RU"
+            fi
+
+            echo "$BLOCKED" > /tmp/qobuz_geo
+            set_hosts_link "$HOSTS_TARGET"
+            printf '%s:%s\n' "$VPS" "$VPS_PORT" > "$TARGETFILE"
+            start_qobuz_proxy_if_running
+
+            exit 0
+        fi
+
+        echo "0" > /tmp/qobuz_geo
+        set_hosts_link "$HOSTS_WORLD"
+
+        attempts=$((attempts + 1))
+        if [ "$attempts" -lt 10 ]; then
+            sleep 2
+        else
+            sleep 30
+        fi
+    done
+) &

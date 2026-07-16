@@ -1,0 +1,85 @@
+#!/bin/sh
+#
+# S51nfqws2 — nfqws2 DPI bypass init script
+#
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+NFQWS_BIN="/usr/bin/nfqws2"
+CONFFILE="/etc/nfqws2/nfqws2.conf"
+PIDFILE="/var/run/nfqws2.pid"
+
+[ -f "$CONFFILE" ] && . "$CONFFILE"
+QNUM="${NFQUEUE_NUM:-300}"
+IFACE="${ISP_INTERFACE:-eth0}"
+
+is_running() { pgrep -nf "$NFQWS_BIN" >/dev/null 2>&1; }
+
+load_modules() {
+	for mod in nfnetlink_queue xt_multiport xt_connbytes xt_NFQUEUE xt_CONNMARK xt_comment xt_tcpudp xt_conntrack xt_state; do
+		modprobe "$mod" 2>/dev/null
+	done
+}
+
+ensure_chains() {
+	iptables -t mangle -N nfqws_post 2>/dev/null
+	iptables -t mangle -C POSTROUTING -j nfqws_post 2>/dev/null || \
+		iptables -t mangle -I POSTROUTING -j nfqws_post
+	iptables -t mangle -C nfqws_post -o "$IFACE" -m mark --mark 0x40000000/0x40000000 -j RETURN 2>/dev/null || \
+		iptables -t mangle -I nfqws_post 1 -o "$IFACE" -m mark --mark 0x40000000/0x40000000 -j RETURN
+	OLDIFS="$IFS"; IFS=","
+	for port in ${TCP_PORTS:-80,443}; do
+		iptables -t mangle -C nfqws_post -o "$IFACE" -p tcp --dport "$port" -j NFQUEUE --queue-num "$QNUM" --queue-bypass 2>/dev/null || \
+			iptables -t mangle -I nfqws_post 1 -o "$IFACE" -p tcp --dport "$port" -j NFQUEUE --queue-num "$QNUM" --queue-bypass
+	done
+	IFS="$OLDIFS"
+}
+
+start() {
+	is_running && { echo "NFQWS2 already running"; return 1; }
+	echo "Starting NFQWS2..."
+
+	load_modules
+
+	ARGS="--qnum=$QNUM"
+	[ -n "$NFQWS_BASE_ARGS" ] && ARGS="$ARGS $NFQWS_BASE_ARGS"
+	[ -n "$NFQWS_ARGS" ] && ARGS="$ARGS $NFQWS_ARGS"
+	[ -n "$NFQWS_ARGS_QUIC" ] && ARGS="$ARGS $NFQWS_ARGS_QUIC"
+	[ -n "$NFQWS_ARGS_UDP" ] && ARGS="$ARGS $NFQWS_ARGS_UDP"
+	[ -n "$NFQWS_EXTRA_ARGS" ] && ARGS="$ARGS $NFQWS_EXTRA_ARGS"
+	[ -n "$NFQWS_ARGS_IPSET" ] && ARGS="$ARGS $NFQWS_ARGS_IPSET"
+	[ -n "$NFQWS_ARGS_CUSTOM" ] && ARGS="$ARGS $NFQWS_ARGS_CUSTOM"
+
+	ensure_chains
+	cd /tmp
+	$NFQWS_BIN --daemon --pidfile="$PIDFILE" --chdir=/tmp $ARGS 2>&1
+	sleep 2
+
+	if is_running; then
+		sysctl -w net.netfilter.nf_conntrack_checksum=0 2>/dev/null
+		sysctl -w net.netfilter.nf_conntrack_tcp_be_liberal=1 2>/dev/null
+		echo "NFQWS2 started"
+	else
+		echo "ERROR: NFQWS2 failed to start"
+		return 1
+	fi
+}
+
+stop() {
+	is_running || { echo "NFQWS2 not running"; return 1; }
+	echo "Stopping NFQWS2..."
+	kill -15 $(cat "$PIDFILE" 2>/dev/null) 2>/dev/null
+	sleep 1
+	pkill -f "$NFQWS_BIN" 2>/dev/null
+	rm -f "$PIDFILE"
+	iptables -t mangle -F nfqws_post 2>/dev/null
+	echo "NFQWS2 stopped"
+}
+
+case "$1" in
+	start)   start ;;
+	stop)    stop ;;
+	restart) stop; sleep 1; start ;;
+	status)  is_running && echo "NFQWS2 running" || echo "NFQWS2 stopped" ;;
+	reload)  is_running && kill -1 $(cat "$PIDFILE") || echo "NFQWS2 not running" ;;
+	*)       echo "Usage: $0 {start|stop|restart|status|reload}" ;;
+esac

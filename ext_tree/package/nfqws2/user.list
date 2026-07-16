@@ -1,0 +1,63 @@
+# Spotify Connect (librespot)
+# Confirmed from librespot binary strings (v0.8.x):
+# API / OAuth
+accounts.spotify.com
+apresolve.spotify.com
+clienttoken.spotify.com
+login5.spotify.com
+# Access point (TCP binary protocol)
+ap.spotify.com
+# Dealer (WebSocket control channel)
+dealer.spotify.com
+# Spclient (metadata, streaming manifests, CDN resolution)
+spclient.wg.spotify.com
+# Image CDN (album art, playlists)
+i.scdn.co
+# Audio CDN (Akamai / Fastly / Edgesuite) — resolved dynamically
+audio-ak-spotify-com.akamaized.net
+audio4-ak-spotify-com.akamaized.net
+audio-cf.spotifycdn.com
+audio-gm-off.spotifycdn.com
+heads-ak-spotify-com.akamaized.net
+heads4-ak-spotify-com.akamaized.net
+spotify.com.edgesuite.net
+spotify.map.fastly.net
+spotify.map.fastlylb.net
+# Static assets / CDN (v2fly community list)
+scdn.co
+spotifycdn.com
+spotifycdn.net
+# Catch-all
+spotify.com
+
+# Tidal Connect
+# API / Auth / WebSocket / CDN (v2fly + common knowledge)
+api.tidal.com
+auth.tidal.com
+login.tidal.com
+listeners.tidal.com
+sp.tidal.com
+audio.tidal.com
+resources.tidal.com
+tidal.com
+tidalhifi.com
+wimpmusic.com
+
+# Qobuz Connect
+# Confirmed from upmpdcli qobuz plugin (raw.py, spoofbuz.py) and SDK:
+# API endpoint (all REST calls go here)
+www.qobuz.com
+# Web player (bundle/app secret extraction)
+play.qobuz.com
+# Qobuz Connect WebSocket/API (confirmed via tcpdump)
+qws-us-prod.qobuz.com
+# Likely subdomains (not confirmed in source but standard practice):
+auth.qobuz.com
+streaming.qobuz.com
+static.qobuz.com
+# Audio CDN — Akamai (confirmed from netstat during playback)
+deploy.static.akamaitechnologies.com
+# DoH
+cloudflare-dns.com
+# Catch-all
+qobuz.com

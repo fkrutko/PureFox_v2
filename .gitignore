@@ -4,6 +4,7 @@ buildroot/.auto.deps
 buildroot/.config.cmd
 buildroot/.config.old
 *.depend
+.agents
 *.o
 buildroot/*.patch
 buildroot/*.diff
@@ -13,6 +14,7 @@ buildroot/*.diff
 *.pyc
 .claude
 .deepseek
+.codex
 AGENTS.md
 
 

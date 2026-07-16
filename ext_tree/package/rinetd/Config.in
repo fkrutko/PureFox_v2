@@ -1,0 +1,4 @@
+config BR2_PACKAGE_RINETD
+	bool "rinetd"
+	help
+	  TCP port forwarder. Listens on local port, forwards to remote.

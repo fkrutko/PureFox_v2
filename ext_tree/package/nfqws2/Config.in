@@ -1,0 +1,8 @@
+config BR2_PACKAGE_NFQWS2
+	bool "nfqws2"
+	depends on BR2_PACKAGE_IPTABLES
+	select BR2_PACKAGE_LIBNETFILTER_QUEUE
+	help
+	  nfqws2 — DPI bypass utility (NFQUEUE-based TCP/UDP packet modification).
+	  Includes nfqws2 binary from zapret2, Lua strategies, and init scripts.
+	  https://github.com/nfqws/nfqws2-keenetic

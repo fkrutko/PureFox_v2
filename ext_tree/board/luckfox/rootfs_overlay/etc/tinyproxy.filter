@@ -1,0 +1,9 @@
+# Qobuz domains only — all other CONNECT requests rejected
+# Audio CDNs go directly (not through proxy)
+^www\.qobuz\.com$
+^play\.qobuz\.com$
+^qws-us-prod\.qobuz\.com$
+^qws-eu-prod\.qobuz\.com$
+^static\.qobuz\.com$
+^streaming\.qobuz\.com$
+^api\.qobuz\.com$

@@ -1,0 +1,14 @@
+#!/bin/sh
+case "$1" in
+    start)
+        killall doh-proxy 2>/dev/null
+        /usr/sbin/doh-proxy &
+        echo "nameserver 127.0.0.1" > /etc/resolv.conf
+        ;;
+    stop)
+        killall doh-proxy 2>/dev/null
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        ;;
+esac

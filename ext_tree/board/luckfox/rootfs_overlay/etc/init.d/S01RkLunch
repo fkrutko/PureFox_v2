@@ -28,6 +28,7 @@ else
     NIC=$(echo "$SERIAL" | tail -c 7)
     MAC="${OUI}:${NIC:0:2}:${NIC:2:2}:${NIC:4:2}"
     echo $MAC > /data/ethaddr.txt
+    chattr +i /data/ethaddr.txt
 fi
 
 /sbin/ifconfig eth0 down
