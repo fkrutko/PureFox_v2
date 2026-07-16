@@ -16,7 +16,6 @@
 
 #define EVENT_MAX 32
 #define SAVE_DELAY_MS 1000
-#define NOTIFY_DELAY_MS 75
 
 #define DBUS_OBJECT_PATH "/org/purefox/statusmonitor"
 #define DBUS_INTERFACE_NAME "org.purefox.StatusMonitor"
@@ -86,12 +85,20 @@ static void set_volume(int volume)
 	snd_mixer_close(mixer);
 }
 
-static void notify_status(void)
+static void notify_status(int volume)
 {
 	static DBusConnection *connection;
 	DBusMessage *message;
 	DBusError error;
-	const char *source = "encoder";
+	char value[8];
+	const char *source;
+
+	if (volume >= 0) {
+		snprintf(value, sizeof(value), "%d%%", volume);
+		source = value;
+	} else {
+		source = "mute";
+	}
 
 	if (!connection) {
 		dbus_error_init(&error);
@@ -163,8 +170,8 @@ static int open_event(const char *name)
 int main(void)
 {
 	struct pollfd fds[EVENT_MAX];
-	int count = 0, volume = get_volume(), dirty = 0, notify_pending = 0;
-	long long save_at = 0, notify_at = 0;
+	int count = 0, volume = get_volume(), dirty = 0;
+	long long save_at = 0;
 	DIR *dir;
 	struct dirent *entry;
 
@@ -186,16 +193,11 @@ int main(void)
 
 	while (running) {
 		struct timespec now;
-		long long deadline = 0;
 		int timeout;
 
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		long long ms = now.tv_sec * 1000LL + now.tv_nsec / 1000000;
-		if (dirty)
-			deadline = save_at;
-		if (notify_pending && (!deadline || notify_at < deadline))
-			deadline = notify_at;
-		timeout = deadline ? (int)(deadline > ms ? deadline - ms : 0) : -1;
+		timeout = dirty ? (int)(save_at > ms ? save_at - ms : 0) : -1;
 		int ready = poll(fds, count, timeout);
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		ms = now.tv_sec * 1000LL + now.tv_nsec / 1000000;
@@ -214,12 +216,10 @@ int main(void)
 						set_volume(volume);
 						dirty = 1;
 						save_at = ms + SAVE_DELAY_MS;
-						notify_pending = 1;
-						notify_at = ms + NOTIFY_DELAY_MS;
+						notify_status(volume);
 					} else if (event.type == EV_KEY && event.code == KEY_MUTE && event.value) {
 						toggle_mute();
-						notify_pending = 1;
-						notify_at = ms;
+						notify_status(-1);
 					}
 				}
 			}
@@ -227,10 +227,6 @@ int main(void)
 		if (dirty && ms >= save_at) {
 			save_volume(volume);
 			dirty = 0;
-		}
-		if (notify_pending && ms >= notify_at) {
-			notify_status();
-			notify_pending = 0;
 		}
 	}
 	if (dirty)

@@ -8,6 +8,7 @@ $(document).ready(function () {
     let statusInterval = null;
     let statusEvents = null;
     let statusEventsConnected = false;
+    let statusRequestSequence = 0;
     let isDlnaBridgeActive = false; // true when DLNA bridge is enabled
     const DEBUG_UI = new URLSearchParams(window.location.search).get('debug') === '1';
     const debugLog = (...args) => { if (DEBUG_UI) console.log(...args); };
@@ -361,13 +362,19 @@ $(document).ready(function () {
 
     // Force status check on user actions
     function forceStatusCheck() {
+        const requestSequence = ++statusRequestSequence;
+
         debugLog('Принудительная проверка состояния...');
         $.ajax({
-            url: 'status_fast.php',
+            url: 'status_fast.php?_=' + Date.now(),
             method: 'GET',
             timeout: 3000,
             dataType: 'json',
+            cache: false,
             success: function(response) {
+                if (requestSequence !== statusRequestSequence) {
+                    return;
+                }
                 debugLog('Принудительная проверка:', response);
                 updateInterfaceFromStatus(response);
                 lastKnownStatus = response;
@@ -417,12 +424,26 @@ $(document).ready(function () {
         };
     }
 
+    function restartStatusEvents() {
+        if (statusEvents) {
+            statusEvents.close();
+            statusEvents = null;
+        }
+        statusEventsConnected = false;
+        startStatusEvents();
+    }
+
     // Track page visibility
     document.addEventListener('visibilitychange', function() {
         if (!document.hidden) {
-            // Page became visible - force check
+            restartStatusEvents();
             forceStatusCheck();
         }
+    });
+
+    window.addEventListener('pageshow', function() {
+        restartStatusEvents();
+        forceStatusCheck();
     });
 
     // Spinner control (PRESERVED!)

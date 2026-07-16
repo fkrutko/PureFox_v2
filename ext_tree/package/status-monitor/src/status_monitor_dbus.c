@@ -535,6 +535,24 @@ static void refresh_volume_status_if_changed(time_t now)
         schedule_volume_persist(current_status.volume);
 }
 
+static bool get_dbus_volume(DBusMessage *message, int *volume)
+{
+    DBusMessageIter args;
+    const char *value;
+    char *end;
+    long parsed;
+
+    if (!dbus_message_iter_init(message, &args) ||
+        dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
+        return false;
+    dbus_message_iter_get_basic(&args, &value);
+    parsed = strtol(value, &end, 10);
+    if (end == value || strcmp(end, "%") || parsed < 0 || parsed > 100)
+        return false;
+    *volume = (int)parsed;
+    return true;
+}
+
 // Check USB DAC control availability using ALSA API
 void check_usb_controls(int* volume_available, int* mute_available) {
     *volume_available = 0;
@@ -725,8 +743,16 @@ DBusHandlerResult handle_dbus_message(DBusConnection *connection, DBusMessage *m
             current_status.last_update = time(NULL);
             update_status_file();
         } else if (member && strcmp(member, "VolumeChanged") == 0) {
+            int volume;
+
             printf("Volume change detected via D-Bus\n");
-            get_volume_status_alsa(current_status.volume, &current_status.muted);
+            if (get_dbus_volume(message, &volume)) {
+                snprintf(current_status.volume, sizeof(current_status.volume),
+                         "%d%%", volume);
+                schedule_volume_persist(current_status.volume);
+            } else {
+                get_volume_status_alsa(current_status.volume, &current_status.muted);
+            }
             current_status.last_update = time(NULL);
             update_status_file();
         }
@@ -818,13 +844,13 @@ int main() {
         
         printf("Entering D-Bus event loop\n");
         while (running) {
-            dbus_connection_read_write_dispatch(dbus_conn, 100);
+            dbus_connection_read_write_dispatch(dbus_conn, 25);
             service_event_clients();
             static time_t last_full_refresh = 0;
             static long long last_volume_poll = 0;
             time_t now = time(NULL);
 
-            if (wait_for_volume_event(100))
+            if (wait_for_volume_event(25))
                 refresh_volume_status_if_changed(now);
 
             if (monotonic_ms() - last_volume_poll >=
