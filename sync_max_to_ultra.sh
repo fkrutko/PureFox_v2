@@ -124,7 +124,49 @@ for file in "${FILES_TO_SYNC[@]}"; do
 done
 
 echo ""
-echo "Step 5: Updating branding (MAX → Ultra)..."
+echo "Step 5: Enabling new synced packages in the Ultra defconfig..."
+MAX_DEFCONFIG="ext_tree/configs/luckfox_pico_max_defconfig"
+ULTRA_DEFCONFIG="ext_tree/configs/luckfox_pico_ultra_defconfig"
+PACKAGE_SYMBOLS=()
+
+# Defconfigs are intentionally Ultra-specific. Only propagate explicitly
+# enabled symbols for package Config.in files that did not exist in Ultra.
+for file in "${FILES_TO_SYNC[@]}"; do
+    case "$file" in
+        ext_tree/package/*/Config.in)
+            if ! git cat-file -e "$DST_HEAD:$file" 2>/dev/null; then
+                while IFS= read -r symbol; do
+                    PACKAGE_SYMBOLS+=("$symbol")
+                done < <(git show "$SRC_BRANCH:$file" | \
+                    sed -n 's/^config \(BR2_PACKAGE_[A-Z0-9_]*\)$/\1/p')
+            fi
+            ;;
+    esac
+done
+
+if [ ${#PACKAGE_SYMBOLS[@]} -eq 0 ]; then
+    echo "  No new package options to enable"
+elif ! git cat-file -e "$SRC_BRANCH:$MAX_DEFCONFIG" 2>/dev/null || \
+     [ ! -f "$ULTRA_DEFCONFIG" ]; then
+    echo "  [WARN] Defconfig not found; package options were not updated"
+else
+    for symbol in "${PACKAGE_SYMBOLS[@]}"; do
+        if git show "$SRC_BRANCH:$MAX_DEFCONFIG" | grep -qx "${symbol}=y"; then
+            if grep -qx "${symbol}=y" "$ULTRA_DEFCONFIG"; then
+                continue
+            elif grep -qx "# ${symbol} is not set" "$ULTRA_DEFCONFIG"; then
+                sed -i "s/^# ${symbol} is not set$/${symbol}=y/" "$ULTRA_DEFCONFIG"
+            else
+                echo "${symbol}=y" >> "$ULTRA_DEFCONFIG"
+            fi
+            git add "$ULTRA_DEFCONFIG"
+            echo "  [ENABLE] ${symbol}"
+        fi
+    done
+fi
+
+echo ""
+echo "Step 6: Updating branding (MAX → Ultra)..."
 INDEX_PHP="ext_tree/board/luckfox/rootfs_overlay/var/www/index.php"
 if [ -f "$INDEX_PHP" ]; then
     if grep -q "MAX" "$INDEX_PHP"; then
@@ -135,7 +177,7 @@ if [ -f "$INDEX_PHP" ]; then
 fi
 
 echo ""
-echo "Step 6: Reviewing changes..."
+echo "Step 7: Reviewing changes..."
 git status
 
 echo ""
