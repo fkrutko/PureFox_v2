@@ -24,6 +24,7 @@
 #define DBUS_INTERFACE_NAME "org.purefox.StatusMonitor"
 #define EVENT_SOCKET "/tmp/status_monitor_events.sock"
 #define EVENT_CLIENTS_MAX 4
+#define STATUS_POLL_MAX (EVENT_CLIENTS_MAX + 10)
 #define VOLUME_SAVE_DELAY_MS 1000
 
 volatile int running = 1;
@@ -516,6 +517,80 @@ static bool wait_for_volume_event(int timeout_ms)
     return true;
 }
 
+/* Wait for every source that can change published status without polling. */
+static bool poll_status_events(int timeout_ms)
+{
+    struct pollfd fds[STATUS_POLL_MAX];
+    int count = 0, dbus_index = -1, mixer_index = -1, mixer_count = 0;
+    int i, ret;
+    bool volume_event = false;
+
+    if (dbus_conn) {
+        int fd;
+
+        if (dbus_connection_get_unix_fd(dbus_conn, &fd)) {
+            dbus_index = count;
+            fds[count++] = (struct pollfd){ .fd = fd, .events = POLLIN };
+        }
+    }
+    if (event_server >= 0)
+        fds[count++] = (struct pollfd){ .fd = event_server, .events = POLLIN };
+    for (i = 0; i < EVENT_CLIENTS_MAX && count < STATUS_POLL_MAX; i++) {
+        if (event_clients[i] >= 0)
+            fds[count++] = (struct pollfd){ .fd = event_clients[i], .events = POLLIN };
+    }
+
+    if (init_volume_event_mixer()) {
+        mixer_count = snd_mixer_poll_descriptors_count(volume_event_mixer);
+        if (mixer_count > 0 && count + mixer_count <= STATUS_POLL_MAX) {
+            mixer_index = count;
+            if (snd_mixer_poll_descriptors(volume_event_mixer, &fds[count],
+                                           mixer_count) < 0) {
+                reset_volume_event_mixer();
+                mixer_index = -1;
+            } else {
+                count += mixer_count;
+            }
+        }
+    }
+
+    ret = poll(fds, count, timeout_ms);
+    if (ret <= 0)
+        return false;
+
+    if (dbus_index >= 0 && fds[dbus_index].revents)
+        dbus_connection_read_write_dispatch(dbus_conn, 0);
+
+    if (mixer_index >= 0) {
+        unsigned short revents = 0;
+
+        if (snd_mixer_poll_descriptors_revents(volume_event_mixer,
+                                               &fds[mixer_index], mixer_count,
+                                               &revents) < 0) {
+            reset_volume_event_mixer();
+        } else if (revents &&
+                   snd_mixer_handle_events(volume_event_mixer) >= 0) {
+            volume_event = true;
+        }
+    }
+    service_event_clients();
+    return volume_event;
+}
+
+static int status_poll_timeout(long long last_volume_poll)
+{
+    long long now = monotonic_ms();
+    long long next_poll = last_volume_poll +
+        (have_event_clients() ? 250 : 1000);
+    long long deadline = next_poll;
+
+    if (pending_volume_persist >= 0 && volume_persist_at < deadline)
+        deadline = volume_persist_at;
+    if (deadline <= now)
+        return 0;
+    return (int)(deadline - now);
+}
+
 static void refresh_volume_status_if_changed(time_t now)
 {
     char old_volume[16];
@@ -844,13 +919,13 @@ int main() {
         
         printf("Entering D-Bus event loop\n");
         while (running) {
-            dbus_connection_read_write_dispatch(dbus_conn, 25);
-            service_event_clients();
             static time_t last_full_refresh = 0;
             static long long last_volume_poll = 0;
             time_t now = time(NULL);
 
-            if (wait_for_volume_event(25))
+            /* Process messages already queued before blocking in poll(). */
+            dbus_connection_read_write_dispatch(dbus_conn, 0);
+            if (poll_status_events(status_poll_timeout(last_volume_poll)))
                 refresh_volume_status_if_changed(now);
 
             if (monotonic_ms() - last_volume_poll >=
