@@ -27,6 +27,7 @@ rm -f $TARGET_DIR/etc/init.d/*shairport-sync
 rm -f $TARGET_DIR/etc/init.d/*upmpdcli
 rm -f $TARGET_DIR/etc/init.d/*urandom
 rm -f $TARGET_DIR/etc/init.d/*mpd
+rm -f $TARGET_DIR/etc/init.d/S40network
 #rm -f $TARGET_DIR/etc/init.d/*mdev
 rm -f -r $TARGET_DIR/etc/alsa
 #rm -f -r $(TARGET_DIR/var/db
@@ -85,7 +86,6 @@ if [ -d "$TARGET_DIR/usr/lib/tidal" ] && [ "$(ls -A $TARGET_DIR/usr/lib/tidal/*.
     echo "Removing original Tidal directory from rootfs..."
     rm -rf $TARGET_DIR/usr/lib/tidal/*
 fi
-
 
 
 

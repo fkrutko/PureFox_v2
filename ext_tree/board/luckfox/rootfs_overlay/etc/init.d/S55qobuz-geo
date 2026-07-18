@@ -9,9 +9,14 @@
     HOSTS_WORLD="/etc/hosts.world"
     PIDFILE="/tmp/qobuz_geo.pid"
     TARGETFILE="/tmp/qobuz_proxy_target"
+    COUNTRYFILE="/tmp/qobuz_country"
 
     get_country_code() {
-        wget -qO- --timeout=2 -T2 http://ip-api.com/line?fields=countryCode 2>/dev/null
+        code="$(wget -qO- --timeout=3 -T3 https://ipapi.co/country/ 2>/dev/null | tr -d '[:space:]')"
+        [ -n "$code" ] && { echo "$code"; return 0; }
+        code="$(wget -qO- --timeout=3 -T3 https://ipinfo.io/country 2>/dev/null | tr -d '[:space:]')"
+        [ -n "$code" ] && { echo "$code"; return 0; }
+        wget -qO- --timeout=3 -T3 http://ip-api.com/line?fields=countryCode 2>/dev/null | tr -d '[:space:]'
     }
 
     is_proxy_country() {
@@ -40,6 +45,14 @@
             >/dev/null 2>&1 &
     }
 
+    update_nfqws2() {
+        if [ "$COUNTRY_CODE" = "RU" ]; then
+            /etc/init.d/S51nfqws2 start >/dev/null 2>&1
+        else
+            /etc/init.d/S51nfqws2 stop >/dev/null 2>&1
+        fi
+    }
+
     if [ -f "$PIDFILE" ]; then
         oldpid="$(cat "$PIDFILE" 2>/dev/null)"
         if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
@@ -63,9 +76,11 @@
             fi
 
             echo "$BLOCKED" > /tmp/qobuz_geo
+            echo "$COUNTRY_CODE" > "$COUNTRYFILE"
             set_hosts_link "$HOSTS_TARGET"
             printf '%s:%s\n' "$VPS" "$VPS_PORT" > "$TARGETFILE"
             start_qobuz_proxy_if_running
+            update_nfqws2
 
             exit 0
         fi
@@ -74,10 +89,12 @@
         set_hosts_link "$HOSTS_WORLD"
 
         attempts=$((attempts + 1))
-        if [ "$attempts" -lt 10 ]; then
-            sleep 2
-        else
-            sleep 30
+        if [ "$attempts" -ge 10 ]; then
+            # Do not leave a permanent background process when geo lookup is unavailable.
+            echo "UNKNOWN" > "$COUNTRYFILE"
+            /etc/init.d/S51nfqws2 stop >/dev/null 2>&1
+            exit 0
         fi
+        sleep 2
     done
 ) &

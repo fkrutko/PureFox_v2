@@ -7,12 +7,15 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 NFQWS_BIN="/usr/bin/nfqws2"
 CONFFILE="/etc/nfqws2/nfqws2.conf"
 PIDFILE="/var/run/nfqws2.pid"
+COUNTRY_FILE="/tmp/qobuz_country"
 
 [ -f "$CONFFILE" ] && . "$CONFFILE"
 QNUM="${NFQUEUE_NUM:-300}"
 IFACE="${ISP_INTERFACE:-eth0}"
 
 is_running() { pgrep -nf "$NFQWS_BIN" >/dev/null 2>&1; }
+
+is_russia() { [ "$(cat "$COUNTRY_FILE" 2>/dev/null)" = "RU" ]; }
 
 load_modules() {
 	for mod in nfnetlink_queue xt_multiport xt_connbytes xt_NFQUEUE xt_CONNMARK xt_comment xt_tcpudp xt_conntrack xt_state; do
@@ -76,7 +79,7 @@ stop() {
 }
 
 case "$1" in
-	start)   start ;;
+	start)   if is_russia; then start; else echo "NFQWS2 disabled outside Russia"; fi ;;
 	stop)    stop ;;
 	restart) stop; sleep 1; start ;;
 	status)  is_running && echo "NFQWS2 running" || echo "NFQWS2 stopped" ;;

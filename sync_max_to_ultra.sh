@@ -127,6 +127,7 @@ echo ""
 echo "Step 5: Enabling new synced packages in the Ultra defconfig..."
 MAX_DEFCONFIG="ext_tree/configs/luckfox_pico_max_defconfig"
 ULTRA_DEFCONFIG="ext_tree/configs/luckfox_pico_ultra_defconfig"
+ULTRA_POST_BUILD="ext_tree/board/luckfox/scripts/post-build.sh"
 PACKAGE_SYMBOLS=()
 
 # Defconfigs are intentionally Ultra-specific. Only propagate explicitly
@@ -163,6 +164,22 @@ else
             echo "  [ENABLE] ${symbol}"
         fi
     done
+fi
+
+# Keep the common network identity without copying the Ultra-specific
+# defconfig or post-build script from MAX. S01RkLunch is synced above.
+if [ -f "$ULTRA_DEFCONFIG" ]; then
+    sed -i 's/^BR2_TARGET_GENERIC_HOSTNAME=.*/BR2_TARGET_GENERIC_HOSTNAME="purefox"/' \
+        "$ULTRA_DEFCONFIG"
+    git add "$ULTRA_DEFCONFIG"
+    echo "  [NETWORK] hostname set to purefox"
+fi
+
+if [ -f "$ULTRA_POST_BUILD" ] && ! grep -qx 'rm -f \$TARGET_DIR/etc/init.d/S40network' "$ULTRA_POST_BUILD"; then
+    sed -i '/rm -f \$TARGET_DIR\/etc\/init.d\/\*mpd/a rm -f $TARGET_DIR/etc/init.d/S40network' \
+        "$ULTRA_POST_BUILD"
+    git add "$ULTRA_POST_BUILD"
+    echo "  [NETWORK] removed duplicate S40network startup"
 fi
 
 echo ""

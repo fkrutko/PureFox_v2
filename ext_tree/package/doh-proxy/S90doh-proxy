@@ -1,12 +1,29 @@
 #!/bin/sh
+
+RESOLV_BACKUP=/tmp/resolv.conf.upstream
+
 case "$1" in
     start)
+        # Keep the DHCP resolver as the fast and reliable default.
+        [ "${DOH_PROXY_ENABLE:-1}" = "1" ] || exit 0
+        cp -f /etc/resolv.conf "$RESOLV_BACKUP" 2>/dev/null || true
         killall doh-proxy 2>/dev/null
         /usr/sbin/doh-proxy &
-        echo "nameserver 127.0.0.1" > /etc/resolv.conf
+        i=0
+        while [ "$i" -lt 10 ]; do
+            if nslookup cloudflare-dns.com 127.0.0.1 >/dev/null 2>&1; then
+                echo "nameserver 127.0.0.1" > /etc/resolv.conf
+                exit 0
+            fi
+            i=$((i + 1))
+            sleep 1
+        done
+        killall doh-proxy 2>/dev/null
+        [ -s "$RESOLV_BACKUP" ] && cp -f "$RESOLV_BACKUP" /etc/resolv.conf
         ;;
     stop)
         killall doh-proxy 2>/dev/null
+        [ -s "$RESOLV_BACKUP" ] && cp -f "$RESOLV_BACKUP" /etc/resolv.conf
         ;;
     *)
         echo "Usage: $0 {start|stop}"
