@@ -56,23 +56,6 @@ function getSystemStatus() {
     ];
 }
 
-function saveVolume($control) {
-    exec('/usr/bin/amixer sget ' . escapeshellarg($control) . ' 2>/dev/null', $output, $return_code);
-    if ($return_code !== 0) {
-        return;
-    }
-
-    if (preg_match('/\[(\d+)%\]/', implode(' ', $output), $matches)) {
-        $volume = intval($matches[1]);
-        if ($volume >= 0 && $volume <= 100) {
-            $temporary = '/data/i2s_volume.tmp';
-            if (file_put_contents($temporary, $volume . "\n", LOCK_EX) !== false) {
-                rename($temporary, '/data/i2s_volume');
-            }
-        }
-    }
-}
-
 $action = $_POST['action'] ?? '';
 $control = getCachedControl();
 $system_status = getSystemStatus();
@@ -85,13 +68,8 @@ switch ($action) {
         }
         
         exec('/usr/bin/amixer -q sset "' . $control . '" 5%+ 2>/dev/null', $output, $return_code);
-        shell_exec('/opt/dbus_notify VolumeChanged "volume_up" 2>/dev/null &');
-        
-        // Trigger immediate status update
-        shell_exec('/usr/bin/killall -USR1 dbus_monitor 2>/dev/null &');
         
         if ($return_code === 0) {
-            saveVolume($control);
             echo json_encode(['success' => true]);
         } else {
             http_response_code(500);
@@ -106,13 +84,8 @@ switch ($action) {
         }
         
         exec('/usr/bin/amixer -q sset "' . $control . '" 5%- 2>/dev/null', $output, $return_code);
-        shell_exec('/opt/dbus_notify VolumeChanged "volume_down" 2>/dev/null &');
-        
-        // Trigger immediate status update
-        shell_exec('/usr/bin/killall -USR1 dbus_monitor 2>/dev/null &');
         
         if ($return_code === 0) {
-            saveVolume($control);
             echo json_encode(['success' => true]);
         } else {
             http_response_code(500);
@@ -139,13 +112,8 @@ switch ($action) {
         $volume = intval($_POST['volume'] ?? 0);
         if ($volume >= 0 && $volume <= 100) {
             exec("/usr/bin/amixer -q sset \"$control\" {$volume}% 2>/dev/null", $output, $return_code);
-            shell_exec("/opt/dbus_notify VolumeChanged \"set_volume_{$volume}\" 2>/dev/null &");
-            
-            // Trigger immediate status update
-            shell_exec('/usr/bin/killall -USR1 dbus_monitor 2>/dev/null &');
             
             if ($return_code === 0) {
-                saveVolume($control);
                 echo json_encode(['success' => true]);
             } else {
                 http_response_code(500);
@@ -168,16 +136,11 @@ switch ($action) {
         
         if ($is_muted) {
             exec('/usr/bin/amixer -q sset "' . $control . '" unmute 2>/dev/null', $output, $return_code);
-            shell_exec('/opt/dbus_notify VolumeChanged "unmute" 2>/dev/null &');
             $new_state = false;
         } else {
             exec('/usr/bin/amixer -q sset "' . $control . '" mute 2>/dev/null', $output, $return_code);
-            shell_exec('/opt/dbus_notify VolumeChanged "mute" 2>/dev/null &');
             $new_state = true;
         }
-        
-        // Trigger immediate status update
-        shell_exec('/usr/bin/killall -USR1 dbus_monitor 2>/dev/null &');
         
         if ($return_code === 0) {
             echo json_encode(['success' => true, 'muted' => $new_state]);
