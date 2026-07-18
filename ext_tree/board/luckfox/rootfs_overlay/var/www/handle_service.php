@@ -23,8 +23,20 @@ function fail($message) {
 function stopProcessGroup($processList) {
     $plist = implode(' ', array_map('escapeshellarg', $processList));
     executeCommand("killall $plist 2>/dev/null || true");
-    executeCommand("sleep 1");
+    executeCommand("sleep 0.1");
     executeCommand("killall -9 $plist 2>/dev/null || true");
+}
+
+function waitForProcess($process, $timeoutMs = 1000) {
+    $attempts = (int)($timeoutMs / 100);
+    for ($attempt = 0; $attempt < $attempts; $attempt++) {
+        $pid = trim((string)shell_exec('/bin/pidof ' . escapeshellarg($process) . ' 2>/dev/null'));
+        if ($pid !== '') {
+            return true;
+        }
+        usleep(100000);
+    }
+    return false;
 }
 
 $players = [
@@ -79,8 +91,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'apscream', 'shairport-sync', 'squeezelite', 'librespot', 'qobuz-connect', 'tidalconnect', 'tc_volume']);
-    stopProcessGroup(['avahi-publish-service']);
+    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'apscream', 'shairport-sync', 'squeezelite', 'librespot', 'qobuz-connect', 'tidalconnect', 'tc_volume', 'avahi-publish-service']);
 
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');
@@ -89,12 +100,13 @@ try {
     // Start selected player in foreground of this shell call (script itself backgrounds daemons as needed)
     $startOutput = executeCommand('/etc/init.d/S95player start');
 
-    // Quick confirmation window
-    $proc = $players[$playerToStart]['process'];
-    $confirm = executeCommand("sleep 1; pidof $proc >/dev/null 2>&1 && echo ok || echo fail");
-    $confirmed = (strpos($confirm, 'ok') !== false);
-
+    // Publish the transition immediately. status_monitor verifies the actual
+    // process state and pushes it to connected browsers through SSE.
     executeCommand('/opt/dbus_notify ServiceChanged ' . escapeshellarg($playerToStart) . ' 2>/dev/null || true');
+
+    // Confirm the actual process without a fixed one-second delay.
+    $proc = $players[$playerToStart]['process'];
+    $confirmed = waitForProcess($proc);
 
     echo json_encode([
         'status' => $confirmed ? 'success' : 'error',

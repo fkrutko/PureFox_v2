@@ -54,7 +54,7 @@ The latest firmware is available at:
 
 ### Web Interface
 
-Once booted, the device is available at `http://purefox/` or by IP.  
+Once booted, the device is available at `http://purefox/` or by IP. If the home DNS does not resolve short names, use the mDNS address `http://purefox.local/`.
 The web interface supports automatic language switching (English, Russian, Chinese, German, French).  
 Unused player buttons can be hidden by swiping left.  
 The version button at the bottom is for online firmware updates.

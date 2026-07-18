@@ -3,6 +3,8 @@ $(document).ready(function () {
     let lastKnownStatus = null;
     let isServiceSwitching = false; // Flag to block updates during switching
     let serviceSwitchWatchdog = null;
+    let serviceStatusProbeTimer = null;
+    let pendingService = null;
     let isVolumeChanging = false; // Flag to block volume updates during user changes
     let isAlsaSwitching = false; // Flag to block ALSA updates during switching
     let statusInterval = null;
@@ -16,9 +18,14 @@ $(document).ready(function () {
 
     function resetServiceSwitchFlag() {
         isServiceSwitching = false;
+        pendingService = null;
         if (serviceSwitchWatchdog) {
             clearTimeout(serviceSwitchWatchdog);
             serviceSwitchWatchdog = null;
+        }
+        if (serviceStatusProbeTimer) {
+            clearTimeout(serviceStatusProbeTimer);
+            serviceStatusProbeTimer = null;
         }
         hideSpinner();
     }
@@ -26,10 +33,17 @@ $(document).ready(function () {
     // Universal interface update function
     function updateInterfaceFromStatus(data) {
         // Update active service ONLY if switching is not in progress AND not in USB-to-I2S
-        if (data.active_service !== undefined && !isServiceSwitching && !$('#usbto-i2s-btn').hasClass('active')) {
-            $('button[data-service]').removeClass('active');
-            if (data.active_service) {
-                $(`button[data-service="${data.active_service}"]`).addClass('active');
+        if (data.active_service !== undefined && !$('#usbto-i2s-btn').hasClass('active')) {
+            // During a switch, ignore the stopped player's final status but
+            // accept the requested player as soon as status_monitor reports it.
+            if (isServiceSwitching && data.active_service === pendingService) {
+                resetServiceSwitchFlag();
+            }
+            if (!isServiceSwitching) {
+                $('button[data-service]').removeClass('active');
+                if (data.active_service) {
+                    $(`button[data-service="${data.active_service}"]`).addClass('active');
+                }
             }
         }
 
@@ -403,6 +417,41 @@ $(document).ready(function () {
         });
     }
 
+    // This is a short-lived fallback for an SSE reconnect during a switch.
+    // status_fast.php only reads status_monitor's already prepared JSON.
+    function probeServiceStart(service) {
+        if (!isServiceSwitching || pendingService !== service) {
+            return;
+        }
+
+        $.ajax({
+            url: 'status_fast.php',
+            method: 'GET',
+            timeout: 1000,
+            dataType: 'json',
+            cache: false,
+            success: function(response) {
+                if (!isServiceSwitching || pendingService !== service) {
+                    return;
+                }
+                lastKnownStatus = response;
+                updateInterfaceFromStatus(response);
+                if (isServiceSwitching) {
+                    serviceStatusProbeTimer = setTimeout(function() {
+                        probeServiceStart(service);
+                    }, 250);
+                }
+            },
+            error: function() {
+                if (isServiceSwitching && pendingService === service) {
+                    serviceStatusProbeTimer = setTimeout(function() {
+                        probeServiceStart(service);
+                    }, 250);
+                }
+            }
+        });
+    }
+
     function startStatusEvents() {
         if (!window.EventSource || statusEvents) {
             return;
@@ -500,7 +549,7 @@ $(document).ready(function () {
                 lastKnownStatus = response;
                 
                 // Обновляем UI
-                if (activeService !== previousActiveService) {
+                if (!isServiceSwitching && activeService !== previousActiveService) {
                     if (previousActiveService !== null && previousActiveService !== activeService) {
                         hideSpinner();
                     }
@@ -514,7 +563,9 @@ $(document).ready(function () {
                 if (!$('#usbto-i2s-btn').hasClass('active')) {
                     updateAlsaUI(response.alsa_state);
                 }
-                updateVolumeFromStatus(response);
+                if (!isVolumeChanging) {
+                    updateVolumeFromStatus(response);
+                }
                 
                 if (callback) callback(activeService);
             },
@@ -664,14 +715,13 @@ $(document).ready(function () {
         if ($(e.target).is('a') || $(e.target).is('img')) return true;
         if (!$(this).data('service')) return;
         
-        if (isServiceSwitching) {
+        if (isServiceSwitching || window.purefoxServiceSwitchInProgress) {
             return;
         }
 
         if ($(this).hasClass('active')) return;
 
         const service = $(this).data('service');
-        forceStatusCheck(); // Принудительная проверка при клике
         
         // Используем последнее известное состояние ALSA
         const alsaState = lastKnownStatus ? lastKnownStatus.alsa_state : null;
@@ -686,6 +736,8 @@ $(document).ready(function () {
     function switchPlayerService(service) {
         // Блокируем обновления кнопок во время переключения
         isServiceSwitching = true;
+        window.purefoxServiceSwitchInProgress = true;
+        pendingService = service;
         showSpinner(translations[currentLang]['switching_player']);
         if (serviceSwitchWatchdog) clearTimeout(serviceSwitchWatchdog);
         serviceSwitchWatchdog = setTimeout(function() {
@@ -700,6 +752,7 @@ $(document).ready(function () {
         $('.btn-custom').removeClass('active');
         $(`button[data-service="${service}"]`).addClass('active');
         debugLog('Кнопка', service, 'активирована мгновенно, ожидаем запуск сервиса...');
+        probeServiceStart(service);
 
         // Переключение сервиса
         
@@ -712,7 +765,18 @@ $(document).ready(function () {
             method: 'POST',
             data: { service: service },
             timeout: 15000,
-            success: function() {
+            dataType: 'json',
+            success: function(result) {
+                if (!result || result.status !== 'success') {
+                    console.error('Service switch rejected:', result);
+                    resetServiceSwitchFlag();
+                    $('.btn-custom').removeClass('active');
+                    customAlert((result && result.message) || translations[currentLang]['service_error']);
+                    return;
+                }
+                if (!isServiceSwitching || pendingService !== service) {
+                    return;
+                }
                 debugLog('Команда переключения на', service, 'отправлена, начинаем проверку...');
                 
                 // Сразу начинаем проверку без задержки
@@ -759,34 +823,30 @@ $(document).ready(function () {
                                         debugLog('Обновление данных после переключения источника...');
                                         updateStatusFromServer();
                                     }, 2500);
-                                } else if (activeService !== service) {
-                                    debugLog("Активирован сервис " + activeService + " вместо " + service);
-                                    resetServiceSwitchFlag();
-                                    $('.btn-custom').removeClass('active');
-                                    $(`button[data-service="${activeService}"]`).addClass('active');
-                                    lastKnownStatus = response;
-                                    updateInterfaceFromStatus(response);
-
-                                    // Принудительно обновляем данные из system_status.json через 2.5s
-                                    // (учитываем задержку обновления status_monitor ~2s)
-                                    setTimeout(() => {
-                                        debugLog('Обновление данных после переключения плеера...');
-                                        updateStatusFromServer();
-                                    }, 2500);
                                 } else if (checkCount >= maxChecks) {
                                     console.error("Тайм-аут при переключении на сервис " + service);
                                     resetServiceSwitchFlag();
                                     $('.btn-custom').removeClass('active');
                                     customAlert(translations[currentLang]['service_error']);
                                 } else {
+                                    // The old player can remain in status_monitor briefly
+                                    // after its process has been stopped. Keep waiting for
+                                    // the requested service instead of reverting the UI.
+                                    debugLog("Ожидаем " + service + ", пока активен " + activeService);
                                     setTimeout(checkServiceStatusChange, checkInterval);
                                 }
                             },
                             error: function(xhr, status, error) {
-                                console.error('Ошибка проверки состояния:', status, error);
-                                resetServiceSwitchFlag();
-                                $('.btn-custom').removeClass('active');
-                                customAlert(translations[currentLang]['service_error']);
+                                checkCount++;
+                                debugWarn('Ошибка проверки состояния:', status, error);
+                                if (checkCount >= maxChecks) {
+                                    console.error('Тайм-аут проверки состояния:', status, error);
+                                    resetServiceSwitchFlag();
+                                    $('.btn-custom').removeClass('active');
+                                    customAlert(translations[currentLang]['service_error']);
+                                    return;
+                                }
+                                setTimeout(checkServiceStatusChange, checkInterval);
                             }
                         });
                     }
@@ -799,6 +859,9 @@ $(document).ready(function () {
                 resetServiceSwitchFlag();
                 $('.btn-custom').removeClass('active');
                 customAlert(translations[currentLang]['service_error'] + ': ' + status);
+            },
+            complete: function() {
+                window.purefoxServiceSwitchInProgress = false;
             }
         });
     }
@@ -994,6 +1057,14 @@ $(document).ready(function () {
     let volumeDisplay = document.getElementById('volume-display');
     let volumeIcon = document.getElementById('volume-icon');
     let isMuted = false;
+    let volumeCommitTimer = null;
+    let volumeReleaseTimer = null;
+    let pendingVolume = null;
+    let volumeRequestInFlight = false;
+    let lastSentVolume = null;
+    let lastVolumeRequestAt = 0;
+    let volumeKeyboardAdjusting = false;
+    const VOLUME_REQUEST_INTERVAL_MS = 100;
 
     // Обновляем громкость из уже полученных данных status_fast.php (НЕ отдельный запрос!)
     function updateVolumeFromStatus(data) {
@@ -1081,10 +1152,30 @@ $(document).ready(function () {
         }
     }
 
-    // Set volume
-    function setVolume(volume) {
-        isVolumeChanging = true; // Блокируем обновления громкости
-        
+    function releaseVolumeUpdateLock() {
+        if (volumeReleaseTimer) {
+            clearTimeout(volumeReleaseTimer);
+        }
+        volumeReleaseTimer = setTimeout(() => {
+            if (!volumeRequestInFlight && pendingVolume === null) {
+                isVolumeChanging = false;
+            }
+        }, 250);
+    }
+
+    // Send only one volume request at a time. While it is in flight, retain
+    // just the latest slider value instead of queueing every keyboard repeat.
+    function setVolume() {
+        if (volumeRequestInFlight || pendingVolume === null) {
+            return;
+        }
+
+        const volume = pendingVolume;
+        pendingVolume = null;
+        lastSentVolume = volume;
+        lastVolumeRequestAt = Date.now();
+        volumeRequestInFlight = true;
+
         fetch('volume.php', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -1094,24 +1185,54 @@ $(document).ready(function () {
         .then(data => {
             if (data.disabled) {
                 debugLog('Volume control disabled:', data.reason);
-                isVolumeChanging = false;
                 return;
             }
             if (data.success) {
                 volumeDisplay.textContent = volume;
             }
-            // Разблокируем через 1 секунду, чтобы дать время системе обновиться
-            setTimeout(() => {
-                isVolumeChanging = false;
-            }, 1000);
         })
         .catch(error => {
             console.error('Error setting volume:', error);
-            // Разблокируем даже при ошибке
-            setTimeout(() => {
-                isVolumeChanging = false;
-            }, 1000);
+        })
+        .finally(() => {
+            volumeRequestInFlight = false;
+            if (pendingVolume !== null && pendingVolume !== lastSentVolume) {
+                scheduleVolumeUpdate(pendingVolume, false);
+            } else {
+                pendingVolume = null;
+                releaseVolumeUpdateLock();
+            }
         });
+    }
+
+    function scheduleVolumeUpdate(volume, immediately) {
+        isVolumeChanging = true;
+
+        if (volumeReleaseTimer) {
+            clearTimeout(volumeReleaseTimer);
+            volumeReleaseTimer = null;
+        }
+
+        if (!volumeRequestInFlight && pendingVolume === null && volume === lastSentVolume) {
+            releaseVolumeUpdateLock();
+            return;
+        }
+
+        pendingVolume = volume;
+        if (immediately) {
+            if (volumeCommitTimer) {
+                clearTimeout(volumeCommitTimer);
+                volumeCommitTimer = null;
+            }
+            setVolume();
+        } else if (!volumeCommitTimer) {
+            const elapsed = Date.now() - lastVolumeRequestAt;
+            const delay = Math.max(0, VOLUME_REQUEST_INTERVAL_MS - elapsed);
+            volumeCommitTimer = setTimeout(() => {
+                volumeCommitTimer = null;
+                setVolume();
+            }, delay);
+        }
     }
 
     // Toggle mute
@@ -1170,16 +1291,35 @@ $(document).ready(function () {
 
     // Volume slider event listener
     if (volumeSlider) {
+        volumeSlider.addEventListener('keydown', function(event) {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' ||
+                event.key === 'Home' || event.key === 'End' ||
+                event.key === 'PageUp' || event.key === 'PageDown') {
+                volumeKeyboardAdjusting = true;
+            }
+        });
+
         volumeSlider.addEventListener('input', function() {
             let volume = this.value;
             volumeDisplay.textContent = volume;
-            // Блокируем обновления пока пользователь двигает слайдер
-            isVolumeChanging = true;
+            scheduleVolumeUpdate(volume, false);
         });
 
         volumeSlider.addEventListener('change', function() {
-            let volume = this.value;
-            setVolume(volume); // setVolume сам управляет блокировкой
+            scheduleVolumeUpdate(this.value, !volumeKeyboardAdjusting);
+        });
+
+        volumeSlider.addEventListener('keyup', function(event) {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' ||
+                event.key === 'Home' || event.key === 'End' ||
+                event.key === 'PageUp' || event.key === 'PageDown') {
+                volumeKeyboardAdjusting = false;
+                scheduleVolumeUpdate(this.value, true);
+            }
+        });
+
+        volumeSlider.addEventListener('pointerup', function() {
+            scheduleVolumeUpdate(this.value, true);
         });
 
         // Начальное состояние загрузится через polling

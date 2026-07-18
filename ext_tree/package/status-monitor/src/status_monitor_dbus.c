@@ -35,6 +35,8 @@ static char status_json[512];
 static snd_mixer_t *volume_event_mixer;
 static int pending_volume_persist = -1;
 static long long volume_persist_at;
+static pid_t active_service_pid;
+static long long last_service_discovery;
 
 void update_status_file(void);
 
@@ -116,6 +118,7 @@ static void service_event_clients(void)
                         send(client, status_json, strlen(status_json), MSG_NOSIGNAL) !=
                             (ssize_t)strlen(status_json))
                         close_event_client(i);
+                    last_service_discovery = 0;
                     break;
                 }
             }
@@ -206,7 +209,7 @@ system_status_t current_status = {
 };
 
 // Check active audio process through /proc
-void get_active_service(char* service) {
+void get_active_service(char* service, pid_t *pid) {
     DIR *proc_dir;
     struct dirent *entry;
     FILE *cmdline_file;
@@ -231,6 +234,7 @@ void get_active_service(char* service) {
     };
     
     strcpy(service, "");
+    *pid = 0;
     
     proc_dir = opendir("/proc");
     if (!proc_dir) return;
@@ -254,6 +258,7 @@ void get_active_service(char* service) {
             for (int i = 0; services[i][0]; i++) {
                 if (strcmp(process_name, services[i][0]) == 0) {
                     strcpy(service, services[i][1]);
+                    *pid = (pid_t)strtol(entry->d_name, NULL, 10);
                     fclose(cmdline_file);
                     closedir(proc_dir);
                     return;
@@ -264,6 +269,37 @@ void get_active_service(char* service) {
     }
     
     closedir(proc_dir);
+}
+
+/* A running player is tracked by PID, so detecting its exit does not require
+ * repeatedly walking /proc. Only an idle system is scanned for a new player. */
+static void refresh_active_service_state(void)
+{
+    char service[sizeof(current_status.active_service)];
+    pid_t pid;
+    long long now;
+
+    if (active_service_pid > 0) {
+        if (kill(active_service_pid, 0) == 0 || errno == EPERM)
+            return;
+        if (errno != ESRCH)
+            return;
+    } else {
+        now = monotonic_ms();
+        if (now - last_service_discovery <
+            (have_event_clients() ? 500 : 5000))
+            return;
+        last_service_discovery = now;
+    }
+
+    get_active_service(service, &pid);
+    active_service_pid = pid;
+    if (strcmp(service, current_status.active_service) == 0)
+        return;
+
+    strcpy(current_status.active_service, service);
+    current_status.last_update = time(NULL);
+    update_status_file();
 }
 
 // Check ALSA state
@@ -729,7 +765,7 @@ void refresh_all_status() {
     strcpy(old_alsa_state, current_status.alsa_state);
     old_usb_dac = current_status.usb_dac;
     
-    get_active_service(current_status.active_service);
+    get_active_service(current_status.active_service, &active_service_pid);
     get_alsa_state(current_status.alsa_state);
     current_status.usb_dac = check_usb_dac();
     
@@ -785,7 +821,7 @@ DBusHandlerResult handle_dbus_message(DBusConnection *connection, DBusMessage *m
             strcpy(old_alsa_state, current_status.alsa_state);
             old_usb_dac = current_status.usb_dac;
             
-            get_active_service(current_status.active_service);
+            get_active_service(current_status.active_service, &active_service_pid);
             get_alsa_state(current_status.alsa_state);
             current_status.usb_dac = check_usb_dac();
             
@@ -835,7 +871,7 @@ DBusHandlerResult handle_dbus_message(DBusConnection *connection, DBusMessage *m
     
     if (interface && strstr(interface, "systemd")) {
         printf("SystemD signal detected, refreshing services\n");
-        get_active_service(current_status.active_service);
+        get_active_service(current_status.active_service, &active_service_pid);
         get_alsa_state(current_status.alsa_state);
         current_status.last_update = time(NULL);
         update_status_file();
@@ -908,6 +944,7 @@ int main() {
                 refresh_volume_status_if_changed(time(NULL));
                 last_volume_poll = monotonic_ms();
             }
+            refresh_active_service_state();
             persist_pending_volume();
             if (time(NULL) - last_full_refresh > 30) {
                 refresh_all_status();
@@ -927,6 +964,8 @@ int main() {
             dbus_connection_read_write_dispatch(dbus_conn, 0);
             if (poll_status_events(status_poll_timeout(last_volume_poll)))
                 refresh_volume_status_if_changed(now);
+
+            refresh_active_service_state();
 
             if (monotonic_ms() - last_volume_poll >=
                 (have_event_clients() ? 250 : 1000)) {
