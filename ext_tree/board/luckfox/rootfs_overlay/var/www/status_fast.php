@@ -23,6 +23,11 @@ if (file_exists($status_file)) {
                     error_log("status_fast.php: Missing fields in JSON: " . print_r($decoded, true));
                 }
                 if ($has_fields) {
+                    $boot_id = trim((string) @file_get_contents('/proc/sys/kernel/random/boot_id'));
+                    if ($boot_id !== '') {
+                        $decoded['boot_id'] = $boot_id;
+                    }
+
                     // TidalConnect check moved to status_monitor.c for better performance
                     
                     // Override control availability for USB mode without physical DAC
@@ -74,6 +79,11 @@ $status = [
     'muted' => false,
     'source' => 'php_fallback'
 ];
+
+$boot_id = trim((string) @file_get_contents('/proc/sys/kernel/random/boot_id'));
+if ($boot_id !== '') {
+    $status['boot_id'] = $boot_id;
+}
 
 // Determine active service
 $all_processes = implode('|', array_values($services));

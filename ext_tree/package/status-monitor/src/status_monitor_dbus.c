@@ -32,6 +32,7 @@ DBusConnection *dbus_conn = NULL;
 static int event_server = -1;
 static int event_clients[EVENT_CLIENTS_MAX] = { -1, -1, -1, -1 };
 static char status_json[512];
+static char boot_id[40];
 static snd_mixer_t *volume_event_mixer;
 static int pending_volume_persist = -1;
 static long long volume_persist_at;
@@ -39,6 +40,18 @@ static pid_t active_service_pid;
 static long long last_service_discovery;
 
 void update_status_file(void);
+
+static void read_boot_id(void)
+{
+    FILE *fp;
+
+    fp = fopen("/proc/sys/kernel/random/boot_id", "r");
+    if (!fp)
+        return;
+    if (fgets(boot_id, sizeof(boot_id), fp))
+        boot_id[strcspn(boot_id, "\r\n")] = '\0';
+    fclose(fp);
+}
 
 void signal_handler(int sig) {
     running = 0;
@@ -740,13 +753,13 @@ void update_status_file() {
              "{\"active_service\":\"%s\",\"alsa_state\":\"%s\","
              "\"usb_dac\":%s,\"volume\":\"%s\",\"muted\":%s,"
              "\"volume_control_available\":%s,\"mute_control_available\":%s,"
-             "\"timestamp\":%ld,\"source\":\"dbus_monitor\"}\n",
+             "\"timestamp\":%ld,\"boot_id\":\"%s\",\"source\":\"dbus_monitor\"}\n",
              current_status.active_service, current_status.alsa_state,
              current_status.usb_dac ? "true" : "false", current_status.volume,
              current_status.muted ? "true" : "false",
              current_status.volume_control_available ? "true" : "false",
              current_status.mute_control_available ? "true" : "false",
-             current_status.last_update);
+             current_status.last_update, boot_id);
     fputs(status_json, fp);
     
     fclose(fp);
@@ -918,6 +931,7 @@ int init_dbus() {
 int main() {
     signal(SIGTERM, signal_handler);
     signal(SIGINT, signal_handler);
+    read_boot_id();
     
     FILE *fp = fopen(LOCK_FILE, "w");
     if (fp) {

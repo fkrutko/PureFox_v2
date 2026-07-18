@@ -10,6 +10,9 @@ $(document).ready(function () {
     let statusInterval = null;
     let statusEvents = null;
     let statusEventsConnected = false;
+    let statusRecoveryTimer = null;
+    let currentBootId = null;
+    let rebootRecoveryActive = false;
     let statusRequestSequence = 0;
     let isDlnaBridgeActive = false; // true when DLNA bridge is enabled
     const DEBUG_UI = new URLSearchParams(window.location.search).get('debug') === '1';
@@ -390,6 +393,7 @@ $(document).ready(function () {
                     return;
                 }
                 debugLog('Принудительная проверка:', response);
+                handleBootIdentity(response);
                 updateInterfaceFromStatus(response);
                 lastKnownStatus = response;
             },
@@ -408,6 +412,7 @@ $(document).ready(function () {
             dataType: 'json',
             cache: false,
             success: function(response) {
+                handleBootIdentity(response);
                 lastKnownStatus = response;
                 updateInterfaceFromStatus(response);
             },
@@ -458,10 +463,18 @@ $(document).ready(function () {
         }
 
         statusEvents = new EventSource('status_events.php');
+        statusEvents.onopen = function() {
+            statusEventsConnected = true;
+            if (statusRecoveryTimer) {
+                clearTimeout(statusRecoveryTimer);
+                statusRecoveryTimer = null;
+            }
+        };
         statusEvents.addEventListener('status', function(event) {
             try {
                 const response = JSON.parse(event.data);
                 statusEventsConnected = true;
+                handleBootIdentity(response);
                 lastKnownStatus = response;
                 updateInterfaceFromStatus(response);
             } catch (error) {
@@ -470,7 +483,61 @@ $(document).ready(function () {
         });
         statusEvents.onerror = function() {
             statusEventsConnected = false;
+            scheduleStatusRecovery();
         };
+    }
+
+    function handleBootIdentity(data) {
+        if (!data || !data.boot_id) {
+            return;
+        }
+        if (currentBootId && currentBootId !== data.boot_id) {
+            beginRebootRecovery();
+            return;
+        }
+        currentBootId = data.boot_id;
+    }
+
+    function beginRebootRecovery() {
+        if (rebootRecoveryActive) {
+            return;
+        }
+        rebootRecoveryActive = true;
+        const rebootText = {
+            'ru': 'Система перезагружается...',
+            'de': 'System wird neu gestartet...',
+            'fr': 'Le systeme redemarre...',
+            'zh': '系统正在重启...',
+            'en': 'System is rebooting...'
+        };
+        const language = detectLanguage();
+        showSpinner(rebootText[language] || rebootText.en);
+        setTimeout(function() {
+            window.location.reload();
+        }, 300);
+    }
+
+    function scheduleStatusRecovery() {
+        if (statusRecoveryTimer || rebootRecoveryActive) {
+            return;
+        }
+        statusRecoveryTimer = setTimeout(function() {
+            statusRecoveryTimer = null;
+            $.ajax({
+                url: 'status_fast.php?_=' + Date.now(),
+                method: 'GET',
+                timeout: 1000,
+                dataType: 'json',
+                cache: false,
+                success: function(response) {
+                    handleBootIdentity(response);
+                    lastKnownStatus = response;
+                    updateInterfaceFromStatus(response);
+                    restartStatusEvents();
+                },
+                error: scheduleStatusRecovery
+            });
+        }, 2000);
     }
 
     function restartStatusEvents() {
