@@ -84,6 +84,7 @@ $(document).ready(function () {
             'confirm_update': 'Вы уверены, что хотите обновить прошивку?',
             'alsa_error': 'Ошибка при переключении ALSA',
             'service_error': 'Ошибка при переключении сервиса',
+            'service_switch_in_progress': 'Переключение плеера ещё не завершено. Подождите.',
             'settings': '',
             'switching_player': 'Переключение плеера...',
             'switching_output': 'Переключение выхода...',
@@ -131,6 +132,7 @@ $(document).ready(function () {
             'confirm_update': 'Are you sure you want to update the firmware?',
             'alsa_error': 'Error switching ALSA',
             'service_error': 'Error switching service',
+            'service_switch_in_progress': 'Player switching is still in progress. Please wait.',
             'settings': '',
             'switching_player': 'Switching player...',
             'switching_output': 'Switching output...',
@@ -178,6 +180,7 @@ $(document).ready(function () {
             'confirm_update': 'Sind Sie sicher, dass Sie die Firmware aktualisieren möchten?',
             'alsa_error': 'Fehler beim Umschalten von ALSA',
             'service_error': 'Fehler beim Umschalten des Dienstes',
+            'service_switch_in_progress': 'Der Playerwechsel wird noch ausgeführt. Bitte warten.',
             'settings': '',
             'switching_player': 'Player wird gewechselt...',
             'switching_output': 'Ausgang wird gewechselt...',
@@ -225,6 +228,7 @@ $(document).ready(function () {
             'confirm_update': 'Êtes-vous sûr de vouloir mettre à jour le firmware?',
             'alsa_error': 'Erreur lors du changement ALSA',
             'service_error': 'Erreur lors du changement de service',
+            'service_switch_in_progress': 'Le changement de lecteur est toujours en cours. Veuillez patienter.',
             'settings': '',
             'switching_player': 'Changement de lecteur...',
             'switching_output': 'Changement de sortie...',
@@ -272,6 +276,7 @@ $(document).ready(function () {
             'confirm_update': '您确定要更新固件吗？',
             'alsa_error': 'ALSA 切换错误',
             'service_error': '服务切换错误',
+            'service_switch_in_progress': '播放器仍在切换中，请稍候。',
             'settings': '',
             'switching_player': '正在切换播放器...',
             'switching_output': '正在切换输出...',
@@ -783,6 +788,7 @@ $(document).ready(function () {
         if (!$(this).data('service')) return;
         
         if (isServiceSwitching || window.purefoxServiceSwitchInProgress) {
+            customAlert(translations[currentLang]['service_switch_in_progress']);
             return;
         }
 
@@ -805,7 +811,6 @@ $(document).ready(function () {
         isServiceSwitching = true;
         window.purefoxServiceSwitchInProgress = true;
         pendingService = service;
-        showSpinner(translations[currentLang]['switching_player']);
         if (serviceSwitchWatchdog) clearTimeout(serviceSwitchWatchdog);
         serviceSwitchWatchdog = setTimeout(function() {
             resetServiceSwitchFlag();
@@ -816,7 +821,7 @@ $(document).ready(function () {
         $('#usbto-i2s-btn').removeClass('active');
 
         // СРАЗУ делаем кнопку активной для отзывчивости UI
-        $('.btn-custom').removeClass('active');
+        $('button[data-service]').removeClass('active');
         $(`button[data-service="${service}"]`).addClass('active');
         debugLog('Кнопка', service, 'активирована мгновенно, ожидаем запуск сервиса...');
         probeServiceStart(service);
