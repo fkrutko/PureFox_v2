@@ -1,5 +1,5 @@
 #!/bin/sh
-# Geo-check + hosts setup for Qobuz proxy (background only)
+# Geo-check + hosts setup for Qobuz proxy (runs after S90doh-proxy)
 
 (
     VPS="${QOBUZ_VPS:-31.58.85.201}"
