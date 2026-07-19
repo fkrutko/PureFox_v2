@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <fcntl.h>
+#include <math.h>
 #include <dirent.h>
 #include <ctype.h>
 #include <errno.h>
@@ -445,7 +446,10 @@ void get_volume_status_alsa(char* volume, int* muted) {
     snd_mixer_elem_t *elem;
     snd_mixer_selem_id_t *sid;
     long min, max, val;
+    long db_min, db_max, db_value;
+    double normalized, min_normalized;
     int switch_val;
+    snd_mixer_selem_channel_id_t volume_channel = SND_MIXER_SCHN_FRONT_LEFT;
     
     strcpy(volume, "100%");
     *muted = 0;
@@ -491,34 +495,50 @@ void get_volume_status_alsa(char* volume, int* muted) {
         
         int read_success = 0;
         
-        if (snd_mixer_selem_has_playback_channel(elem, SND_MIXER_SCHN_MONO)) {
-            if (snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_MONO, &val) >= 0) {
-                read_success = 1;
-            }
+        if (snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_LEFT, &val) >= 0)
+            read_success = 1;
+        
+        if (!read_success &&
+            snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_RIGHT, &val) >= 0) {
+            read_success = 1;
+            volume_channel = SND_MIXER_SCHN_FRONT_RIGHT;
+        }
+
+        if (!read_success &&
+            snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_MONO, &val) >= 0) {
+            read_success = 1;
+            volume_channel = SND_MIXER_SCHN_MONO;
         }
         
-        if (!read_success && snd_mixer_selem_has_playback_channel(elem, SND_MIXER_SCHN_FRONT_LEFT)) {
-            if (snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_LEFT, &val) >= 0) {
-                read_success = 1;
+        if (read_success &&
+            snd_mixer_selem_get_playback_dB_range(elem, &db_min, &db_max) >= 0 &&
+            db_min < db_max &&
+            snd_mixer_selem_get_playback_dB(elem, volume_channel, &db_value) >= 0) {
+            if (db_max - db_min <= 2400) {
+                normalized = (double)(db_value - db_min) / (db_max - db_min);
+            } else {
+                normalized = pow(10.0, (double)(db_value - db_max) / 6000.0);
+                min_normalized = pow(10.0, (double)(db_min - db_max) / 6000.0);
+                normalized = (normalized - min_normalized) / (1.0 - min_normalized);
             }
-        }
-        
-        if (read_success && max > min) {
-            int percent = (int)((val - min) * 100 / (max - min));
+            snprintf(volume, 16, "%d%%", (int)lround(normalized * 100.0));
+        } else if (read_success && max > min) {
+            int percent = (int)(((val - min) * 100 + (max - min) / 2) /
+                                (max - min));
             snprintf(volume, 16, "%d%%", percent);
         }
     }
     
     if (snd_mixer_selem_has_playback_switch(elem)) {
-        if (snd_mixer_selem_has_playback_channel(elem, SND_MIXER_SCHN_MONO)) {
-            if (snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_MONO, &switch_val) >= 0) {
-                *muted = !switch_val;
-            }
-        } else if (snd_mixer_selem_has_playback_channel(elem, SND_MIXER_SCHN_FRONT_LEFT)) {
-            if (snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_FRONT_LEFT, &switch_val) >= 0) {
-                *muted = !switch_val;
-            }
-        }
+        if (snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_FRONT_LEFT,
+                                                 &switch_val) >= 0)
+            *muted = !switch_val;
+        else if (snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_FRONT_RIGHT,
+                                                      &switch_val) >= 0)
+            *muted = !switch_val;
+        else if (snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_MONO,
+                                                      &switch_val) >= 0)
+            *muted = !switch_val;
     }
     
     snd_mixer_close(handle);
@@ -613,13 +633,19 @@ static bool poll_status_events(int timeout_ms)
     if (mixer_index >= 0) {
         unsigned short revents = 0;
 
-        if (snd_mixer_poll_descriptors_revents(volume_event_mixer,
+        /* A USB DAC may disappear while its control fd is in poll().  The
+         * stale fd then stays readable/error-ready forever; keeping it turns
+         * this loop into a 100% CPU spin until ALSA eventually recovers. */
+        if (fds[mixer_index].revents & (POLLERR | POLLHUP | POLLNVAL) ||
+            snd_mixer_poll_descriptors_revents(volume_event_mixer,
                                                &fds[mixer_index], mixer_count,
                                                &revents) < 0) {
             reset_volume_event_mixer();
-        } else if (revents &&
-                   snd_mixer_handle_events(volume_event_mixer) >= 0) {
-            volume_event = true;
+        } else if (revents) {
+            if (snd_mixer_handle_events(volume_event_mixer) < 0)
+                reset_volume_event_mixer();
+            else
+                volume_event = true;
         }
     }
     service_event_clients();
@@ -867,9 +893,21 @@ DBusHandlerResult handle_dbus_message(DBusConnection *connection, DBusMessage *m
             current_status.last_update = time(NULL);
             update_status_file();
         } else if (member && strcmp(member, "VolumeChanged") == 0) {
+            char actual_alsa_state[16];
             int volume;
 
             printf("Volume change detected via D-Bus\n");
+            /*
+             * The encoder can be the first producer of a status event after
+             * the output is switched. Do not publish its volume update with
+             * a stale I2S/USB state, or the web UI can flip the output toggle
+             * back to the previous mode.
+             */
+            get_alsa_state(actual_alsa_state);
+            if (strcmp(actual_alsa_state, current_status.alsa_state) != 0) {
+                refresh_all_status();
+                return DBUS_HANDLER_RESULT_HANDLED;
+            }
             if (get_dbus_volume(message, &volume)) {
                 snprintf(current_status.volume, sizeof(current_status.volume),
                          "%d%%", volume);

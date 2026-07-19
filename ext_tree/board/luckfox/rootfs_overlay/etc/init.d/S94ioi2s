@@ -34,7 +34,7 @@ start() {
             ''|*[!0-9]*) ;;
             *)
                 if [ "$VOLUME" -le 100 ]; then
-                    /usr/bin/amixer -q sset PCM "${VOLUME}%" 2>/dev/null
+                    /usr/bin/amixer -M -q sset PCM "${VOLUME}%" 2>/dev/null
                 fi
                 ;;
         esac

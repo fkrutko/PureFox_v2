@@ -7,7 +7,7 @@ define VOLUME_ENCODER_BUILD_CMDS
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -Wall -Wextra -O2 -s \
 		`$(PKG_CONFIG_HOST_BINARY) --cflags dbus-1` \
 		-o $(@D)/volume-encoder $(@D)/volume-encoder.c \
-		-lasound `$(PKG_CONFIG_HOST_BINARY) --libs dbus-1`
+		-lasound -lm `$(PKG_CONFIG_HOST_BINARY) --libs dbus-1`
 endef
 
 define VOLUME_ENCODER_INSTALL_TARGET_CMDS

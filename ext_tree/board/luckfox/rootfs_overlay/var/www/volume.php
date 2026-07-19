@@ -67,7 +67,7 @@ switch ($action) {
             exit;
         }
         
-        exec('/usr/bin/amixer -q sset "' . $control . '" 5%+ 2>/dev/null', $output, $return_code);
+        exec('/usr/sbin/volume-encoder adjust 5 2>/dev/null', $output, $return_code);
         
         if ($return_code === 0) {
             echo json_encode(['success' => true]);
@@ -83,7 +83,7 @@ switch ($action) {
             exit;
         }
         
-        exec('/usr/bin/amixer -q sset "' . $control . '" 5%- 2>/dev/null', $output, $return_code);
+        exec('/usr/sbin/volume-encoder adjust -5 2>/dev/null', $output, $return_code);
         
         if ($return_code === 0) {
             echo json_encode(['success' => true]);
@@ -111,7 +111,7 @@ switch ($action) {
         
         $volume = intval($_POST['volume'] ?? 0);
         if ($volume >= 0 && $volume <= 100) {
-            exec("/usr/bin/amixer -q sset \"$control\" {$volume}% 2>/dev/null", $output, $return_code);
+            exec('/usr/sbin/volume-encoder set ' . $volume . ' 2>/dev/null', $output, $return_code);
             
             if ($return_code === 0) {
                 echo json_encode(['success' => true]);
@@ -135,10 +135,10 @@ switch ($action) {
         $is_muted = $system_status['muted'] ?? false;
         
         if ($is_muted) {
-            exec('/usr/bin/amixer -q sset "' . $control . '" unmute 2>/dev/null', $output, $return_code);
+            exec('/usr/sbin/volume-encoder mute 2>/dev/null', $output, $return_code);
             $new_state = false;
         } else {
-            exec('/usr/bin/amixer -q sset "' . $control . '" mute 2>/dev/null', $output, $return_code);
+            exec('/usr/sbin/volume-encoder mute 2>/dev/null', $output, $return_code);
             $new_state = true;
         }
         

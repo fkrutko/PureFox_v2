@@ -33,6 +33,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Continue execution, don't interrupt
     }
 
+    // Output switching changes the active ALSA card and mixer control.
+    // Restart the monitor so its control cache and event descriptors match it
+    // before it publishes the next status update to the web UI.
+    shell_exec('/etc/init.d/S40statusmonitor restart 2>/dev/null');
+
     // Additional service restart (if exists)
     $serviceOutput = shell_exec('/bin/sh -c "/etc/init.d/S95* restart" 2>/dev/null');
     

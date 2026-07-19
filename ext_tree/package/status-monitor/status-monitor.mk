@@ -21,7 +21,7 @@ define STATUS_MONITOR_BUILD_CMDS
 	`$(PKG_CONFIG_HOST_BINARY) --cflags dbus-1` \
 	-o status_monitor \
 	status_monitor_dbus.c \
-	-lasound `$(PKG_CONFIG_HOST_BINARY) --libs dbus-1`
+	-lasound -lm `$(PKG_CONFIG_HOST_BINARY) --libs dbus-1`
 	
     cd $(@D) && \
     $(TARGET_CONFIGURE_OPTS) \
