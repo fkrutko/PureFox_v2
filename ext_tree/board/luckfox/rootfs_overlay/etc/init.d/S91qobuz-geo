@@ -1,13 +1,36 @@
 #!/bin/sh
 # Geo-check + hosts setup for Qobuz proxy (runs after S90doh-proxy)
 
+PIDFILE="/tmp/qobuz_geo.pid"
+
+case "${1:-start}" in
+    start)
+        ;;
+    stop)
+        # rcK invokes every S-script with "stop".  Do not run geo lookup or
+        # start nfqws2 during shutdown: that races with its own stop script
+        # and with the iptables teardown.
+        oldpid="$(cat "$PIDFILE" 2>/dev/null)"
+        [ -n "$oldpid" ] && kill "$oldpid" 2>/dev/null
+        rm -f "$PIDFILE"
+        /etc/init.d/S51nfqws2 stop >/dev/null 2>&1
+        exit 0
+        ;;
+    restart)
+        "$0" stop
+        exec "$0" start
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
 (
     VPS="${QOBUZ_VPS:-31.58.85.201}"
     VPS_PORT="${QOBUZ_VPS_PORT:-8443}"
     HOSTS_LINK="/etc/hosts"
     HOSTS_RU="/etc/hosts.ru"
     HOSTS_WORLD="/etc/hosts.world"
-    PIDFILE="/tmp/qobuz_geo.pid"
     TARGETFILE="/tmp/qobuz_proxy_target"
     COUNTRYFILE="/tmp/qobuz_country"
 
