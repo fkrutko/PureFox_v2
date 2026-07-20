@@ -1849,8 +1849,9 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c linux
  	},
  	.ops = &dummy_codec_dai_ops,
  };
---- linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c
+diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c
+--- linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c	2025-07-03 12:59:45.000000000 +0200
++++ linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c	2026-07-20 08:54:26.394165099 +0200
 @@ -1,31 +1,47 @@
 -// SPDX-License-Identifier: GPL-2.0-only
 -// ALSA SoC Audio Layer - Rockchip I2S/TDM Controller driver
@@ -2974,7 +2975,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c linux
  }
  
  /*
-@@ -554,3020 +674,3530 @@
+@@ -554,3020 +674,3529 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -6923,12 +6924,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c linux
 +    .channels_min = 2,
 +    .channels_max = 16,
 +    /*
-+     * Software gain is applied to PCM data in the ALSA ring buffer. Keeping
-+     * one MiB queued at 44.1 kHz made a volume change audible more than a
-+     * second late. 256 KiB bounds normal 4-channel PCM control latency to
-+     * roughly 370 ms while retaining four 64 KiB DMA periods.
++     * Keep a 1 MiB queue for gapless high-rate playback. Volume changes
++     * rebuild queued PCM from the shadow ring, so this capacity no longer
++     * delays the audible gain change.
 +     */
-+    .buffer_bytes_max = 256 * 1024,
++    .buffer_bytes_max = 1024 * 1024,
 +    .period_bytes_min = 8192,         
 +    .period_bytes_max = 64 * 1024,    /* 64KB maximum for deep buffering */
 +    .periods_min = 16,                
