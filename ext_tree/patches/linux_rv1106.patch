@@ -1804,636 +1804,6 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/uac_comm
 -#define UAC_MAX_RATES 10 /* maximum number of rates configurable by f_uac1/2 */
 +#define UAC_MAX_RATES 20 /* PCM×10 + DSD 44.1k×4 + DSD 48k×4 = 18 max */
  #endif
-diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/scripts/dtc/include-prefixes/arm/Makefile linux-rockchip-rk-6.1-rkr6.1_modify/scripts/dtc/include-prefixes/arm/Makefile
---- linux-rockchip-rk-6.1-rkr6.1_orig/scripts/dtc/include-prefixes/arm/Makefile	2025-07-03 12:59:45.000000000 +0200
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/scripts/dtc/include-prefixes/arm/Makefile	2025-11-22 20:03:36.598796410 +0100
-@@ -1122,152 +1122,7 @@
- 	r9a06g032-rzn1d400-db.dtb \
- 	sh73a0-kzm9g.dtb
- dtb-$(CONFIG_ARCH_ROCKCHIP) += \
--	rv1103g-38x38-ipc-v10.dtb \
--	rv1103g-battery-ipc-v10.dtb \
--	rv1103g-battery-ipc-v11.dtb \
--	rv1103g-evb-mcu-display-v11.dtb \
--	rv1103g-evb-v10.dtb \
--	rv1103g-evb-v11.dtb \
--	rv1103g-evb-v11-sii902x-bt6562hdmi.dtb \
--	rv1103g-evb2-v10.dtb \
--	rv1103g-rmsl311-dloc-sl-v10.dtb \
--	rv1103g-scaner-v10.dtb \
--	rv1106g-38x38-ipc-v10.dtb \
--	rv1106g-38x38-ipc-v10-spi-nand.dtb \
--	rv1106g-evb1-mcu-display-v11.dtb \
--	rv1106g-evb1-mcu-display-v20.dtb \
--	rv1106g-evb1-rgb-display-v11.dtb \
--	rv1106g-evb1-v10.dtb \
--	rv1106g-evb1-v10-dual-cam.dtb \
--	rv1106g-evb1-v10-facial-gate.dtb \
--	rv1106g-evb1-v10-spi-nand.dtb \
--	rv1106g-evb1-v10-spi-nor.dtb \
--	rv1106g-evb1-v11.dtb \
--	rv1106g-evb1-v11-4k.dtb \
--	rv1106g-evb1-v11-cvr.dtb \
--	rv1106g-evb1-v11-cvr-dual-cam.dtb \
--	rv1106g-evb1-v11-cvr-ext-dual-cam.dtb \
--	rv1106g-evb1-v11-dual-cam.dtb \
--	rv1106g-evb1-v11-facial-gate.dtb \
--	rv1106g-evb1-v11-nofastae-spi-nand.dtb \
--	rv1106g-evb1-v11-sii902x-bt11202hdmi.dtb \
--	rv1106g-evb1-v11-sii902x-rgb2hdmi.dtb \
--	rv1106g-evb1-v11-spi-nand-cvr.dtb \
--	rv1106g-evb2-v10.dtb \
--	rv1106g-evb2-v10-dual-camera.dtb \
--	rv1106g-evb2-v11-emmc.dtb \
--	rv1106g-evb2-v11-trailcam-emmc.dtb \
--	rv1106g-evb2-v12-aov-spi-nor.dtb \
--	rv1106g-evb2-v12-dual-camera-avs.dtb \
--	rv1106g-evb2-v12-nofastae-emmc.dtb \
--	rv1106g-evb2-v12-nofastae-spi-nand.dtb \
--	rv1106g-evb2-v12-nofastae-spi-nor.dtb \
--	rv1106g-evb2-v12-spi-nand-tb.dtb \
--	rv1106g-evb2-v12-wakeup.dtb \
--	rv1106g-smart-door-lock-rmsl-v10.dtb \
--	rv1106g-smart-door-lock-rmsl-v12.dtb \
--	rv1106g-uvc-demo-v10.dtb \
--	rv1106g-uvc-demo-v10-spi-nor.dtb \
--	rv1108-elgin-r1.dtb \
--	rv1108-evb.dtb \
--	rv1126-evb-ddr3-v10.dtb \
--	rv1126-evb-ddr3-v12.dtb \
--	rv1126-evb-ddr3-v12-spi-nand.dtb \
--	rv1126-evb-ddr3-v12-spi-nor.dtb \
--	rv1126-evb-ddr3-v13.dtb \
--	rv1126b-evb1-v10.dtb \
--	rv1126b-evb1-v10-bt-sco.dtb \
--	rv1126b-evb1-v10-dual-4k.dtb \
--	rv1126b-evb1-v10-dv.dtb \
--	rv1126b-evb1-v10-fastboot-emmc.dtb \
--	rv1126b-evb1-v10-fastboot-spi-nand.dtb \
--	rv1126b-evb1-v10-fastboot-spi-nor.dtb \
--	rv1126b-evb1-v10-spi-nor.dtb \
--	rv1126b-evb1-v11.dtb \
--	rv1126b-evb1-v11-dual-4k.dtb \
--	rv1126b-evb2-v10.dtb \
--	rv1126b-evb2-v10-mcu-k350c4516t.dtb \
--	rv1126b-evb2-v10-rgb-Q7050ITH2641AA1T.dtb \
--	rv1126b-evb2-v10-sii9022-bt1120-to-hdmi.dtb \
--	rv1126b-evb2-v10-tb-400w.dtb \
--	rv1126b-evb3-v10.dtb \
--	rv1126b-evb4-v10.dtb \
--	rv1126b-iotest-v10.dtb \
--	rv1126bp-evb-v14.dtb \
--	rv1126bp-evb-v14-dual-cam.dtb \
--	rk3036-evb.dtb \
--	rk3036-evb1-ddr3-v10.dtb \
--	rk3036-kylin.dtb \
--	rk3066a-bqcurie2.dtb \
--	rk3066a-marsboard.dtb \
--	rk3066a-mk808.dtb \
--	rk3066a-rayeager.dtb \
--	rk3126c-evb-ddr3-v10-linux.dtb \
--	rk3126c-evb-ddr3-v10-linux-slc.dtb \
--	rk3128-evb-ddr3-v10-linux.dtb \
--	rk3128-evb-ddr3-v10-linux-spi-nand.dtb \
--	rk3188-bqedison2qc.dtb \
--	rk3188-px3-evb.dtb \
--	rk3188-radxarock.dtb \
--	rk3228-evb.dtb \
--	rk3229-evb.dtb \
--	rk3229-xms6.dtb \
--	rk3288-evb-act8846.dtb \
--	rk3288-evb-rk808.dtb \
--	rk3288-firefly-beta.dtb \
--	rk3288-firefly.dtb \
--	rk3288-firefly-reload.dtb \
--	rk3288-miqi.dtb \
--	rk3288-phycore-rdk.dtb \
--	rk3288-popmetal.dtb \
--	rk3288-r89.dtb \
--	rk3288-rock2-square.dtb \
--	rk3288-rock-pi-n8.dtb \
--	rk3288-tinker.dtb \
--	rk3288-tinker-s.dtb \
--	rk3288-veyron-brain.dtb \
--	rk3288-veyron-fievel.dtb \
--	rk3288-veyron-jaq.dtb \
--	rk3288-veyron-jerry.dtb \
--	rk3288-veyron-mickey.dtb \
--	rk3288-veyron-mighty.dtb \
--	rk3288-veyron-minnie.dtb \
--	rk3288-veyron-pinky.dtb \
--	rk3288-veyron-speedy.dtb \
--	rk3288-veyron-tiger.dtb \
--	rk3288-vyasa.dtb \
--	rk3308-evb-audio-v10-amp-display-rgb-aarch32.dtb \
--	rk3308-evb-audio-v10-display-rgb-aarch32.dtb \
--	rk3308-evb-audio-v11-display-rgb-aarch32.dtb \
--	rk3308bs-evb-amic-v11-aarch32.dtb \
--	rk3308bs-evb-dmic-pdm-v11-aarch32.dtb \
--	rk3308bs-evb-mipi-display-v11-aarch32.dtb \
--	rk3308hs-voice-module-board-v10-aarch32.dtb \
--	rk3502g-evb1-v10.dtb \
--	rk3503g-evb1-v10.dtb \
--	rk3506b-evb1-v10.dtb \
--	rk3506b-test2-v10.dtb \
--	rk3506g-demo-display-control.dtb \
--	rk3506g-evb1-v10.dtb \
--	rk3506g-evb1-v10-amp.dtb \
--	rk3506g-evb1-v10-dsmc-lb-slave.dtb \
--	rk3506g-evb1-v10-dsmc-master.dtb \
--	rk3506g-evb1-v10-flexbus-adc-dac.dtb \
--	rk3506g-evb1-v10-mcu-k350c4516t.dtb \
--	rk3506g-evb1-v10-rgb-Q7050ITH2641AA1T.dtb \
--	rk3506g-evb1-v10-sii9022-bt1120-to-hdmi.dtb \
--	rk3506g-evb1-v10-sii9022-rgb2hdmi.dtb \
--	rk3506g-evb2-v10.dtb \
--	rk3506g-iotest-v10.dtb \
--	rk3506g-iotest-v10-pdm.dtb \
--	rk3506g-test1-v10-audio.dtb \
--	rk3518-evb1-ddr4-v10.dtb \
--	rk3528-demo4-ddr4-v10.dtb \
--	rk3528-evb1-ddr4-v10.dtb \
--	rk3528-evb2-ddr3-v10.dtb \
--	rk3528-evb3-lp4x-v10.dtb \
--	rk3528-evb4-ddr4-v10.dtb \
--	rk3562-evb2-ddr4-v10.dtb
-+	rv1106_pll.dtb
- dtb-$(CONFIG_ARCH_S3C24XX) += \
- 	s3c2416-smdk2416.dtb
- dtb-$(CONFIG_ARCH_S3C64XX) += \
-diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/scripts/dtc/include-prefixes/arm/rv1106_512_ext.dts linux-rockchip-rk-6.1-rkr6.1_modify/scripts/dtc/include-prefixes/arm/rv1106_512_ext.dts
---- linux-rockchip-rk-6.1-rkr6.1_orig/scripts/dtc/include-prefixes/arm/rv1106_512_ext.dts	1970-01-01 01:00:00.000000000 +0100
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/scripts/dtc/include-prefixes/arm/rv1106_512_ext.dts	2026-07-16 20:33:17.717679716 +0200
-@@ -0,0 +1,152 @@
-+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
-+/*
-+ * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
-+ */
-+
-+/dts-v1/;
-+
-+#include "rv1106.dtsi"
-+#include "rv1106_512_ext-ipc.dtsi"
-+#include "rv1106-pinctrl.dtsi"
-+/ {
-+	model = "Luckfox Pico Max";
-+	compatible = "rockchip,rv1106";
-+
-+	volume_encoder: volume-encoder {
-+		compatible = "rotary-encoder";
-+		label = "PureFox Volume Encoder";
-+		pinctrl-names = "default";
-+		pinctrl-0 = <&volume_encoder_pins>;
-+		gpios = <&gpio1 RK_PC6 GPIO_ACTIVE_LOW>, <&gpio1 RK_PC7 GPIO_ACTIVE_LOW>;
-+		linux,axis = <7>;
-+		rotary-encoder,encoding = "gray";
-+		rotary-encoder,relative-axis;
-+		rotary-encoder,steps-per-period = <1>;
-+	};
-+
-+	volume_encoder_keys: volume-encoder-keys {
-+		compatible = "gpio-keys";
-+		pinctrl-names = "default";
-+		pinctrl-0 = <&volume_mute_pins>;
-+		mute {
-+			label = "Volume Mute";
-+			linux,code = <113>;
-+			gpios = <&gpio1 RK_PC5 GPIO_ACTIVE_LOW>;
-+			debounce-interval = <20>;
-+		};
-+	};
-+
-+};
-+
-+&pinctrl {
-+	volume_encoder {
-+		volume_encoder_pins: volume-encoder-pins {
-+			rockchip,pins = <1 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>,
-+					<1 RK_PC7 RK_FUNC_GPIO &pcfg_pull_up>;
-+		};
-+
-+		volume_mute_pins: volume-mute-pins {
-+			rockchip,pins = <1 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
-+		};
-+	};
-+};
-+
-+/*********I2S*************/
-+&i2s0_8ch {
-+	status = "okay";
-+	rockchip,src4192-compat-mode;
-+};
-+
-+/******EXT_AUDIO_CODEC*****/
-+&mycodec {
-+	status = "okay";
-+};
-+
-+
-+/**********SPI_FLASH**********/
-+&sfc {
-+	status = "okay";
-+	flash@0 {
-+		compatible = "spi-nand";
-+		reg = <0>;
-+		spi-max-frequency = <75000000>;
-+		spi-rx-bus-width = <4>;
-+		spi-tx-bus-width = <1>;
-+	};
-+	
-+};
-+
-+
-+/*********SERIAL_DEBUG_CONSOLE******/
-+&fiq_debugger {
-+	status = "okay";
-+};
-+
-+
-+/**********SDMMC**********/
-+&sdmmc {
-+	max-frequency = <50000000>;
-+	no-sdio;
-+	no-mmc;
-+	bus-width = <4>;
-+	cap-mmc-highspeed;
-+	cap-sd-highspeed;
-+	disable-wp;
-+	pinctrl-names = "default";
-+	pinctrl-0 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_det &sdmmc0_bus4>;
-+	status = "disable";
-+};
-+
-+/**********EMMC*************/
-+&emmc {
-+        status = "disable";
-+};
-+
-+/**********ETH**********/
-+&gmac {
-+	status = "okay";
-+};
-+
-+/**********USB**********/
-+&usbdrd_dwc3 {
-+	status = "okay";
-+	dr_mode = "otg";
-+};
-+
-+/**********I2C**********/
-+&i2c1 {
-+ 	status = "okay";
-+ 	pinctrl-0 = <&i2c1m1_xfer>;
-+ 	clock-frequency = <100000>;
-+ };
-+&i2c3 {
-+	status = "disable";
-+	pinctrl-0 = <&i2c3m1_xfer>;
-+	clock-frequency = <100000>;
-+};
-+
-+/**********SPI**********/
-+&spi0 {
-+	status = "disable";
-+	pinctrl-names = "default";
-+	pinctrl-0 = <&spi0m0_pins>;
-+	cs-gpios = <&gpio1 RK_PC0 1>;
-+	// cs-gpios = <&gpio1 26 1>;
-+	#address-cells = <1>;
-+	#size-cells = <0>;
-+	spidev@0 {
-+		compatible = "rockchip,spidev";
-+		spi-max-frequency = <50000000>;
-+		reg = <0>;
-+	};
-+};
-+
-+/******REAL_TIME_CLOCK******/
-+&rtc {
-+	status = "disable";
-+};
-+
-+/*********TSADC*********/
-+&tsadc {
-+	status = "okay";
-+};
-diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/scripts/dtc/include-prefixes/arm/rv1106_ext.dts linux-rockchip-rk-6.1-rkr6.1_modify/scripts/dtc/include-prefixes/arm/rv1106_ext.dts
---- linux-rockchip-rk-6.1-rkr6.1_orig/scripts/dtc/include-prefixes/arm/rv1106_ext.dts	1970-01-01 01:00:00.000000000 +0100
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/scripts/dtc/include-prefixes/arm/rv1106_ext.dts	2026-07-16 20:33:17.713679626 +0200
-@@ -0,0 +1,155 @@
-+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
-+/*
-+ * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
-+ */
-+
-+/dts-v1/;
-+
-+#include "rv1106.dtsi"
-+#include "rv1106_ext-ipc.dtsi"
-+#include "rv1106-pinctrl.dtsi"
-+/ {
-+	model = "Luckfox Pico Max";
-+	compatible = "rockchip,rv1106";
-+	
-+	nvmem-cells = <&otp_id>;
-+	nvmem-cell-names = "serial-number";
-+	serial-number;
-+
-+	volume_encoder: volume-encoder {
-+		compatible = "rotary-encoder";
-+		label = "PureFox Volume Encoder";
-+		pinctrl-names = "default";
-+		pinctrl-0 = <&volume_encoder_pins>;
-+		gpios = <&gpio1 RK_PC6 GPIO_ACTIVE_LOW>, <&gpio1 RK_PC7 GPIO_ACTIVE_LOW>;
-+		linux,axis = <7>;
-+		rotary-encoder,encoding = "gray";
-+		rotary-encoder,relative-axis;
-+		rotary-encoder,steps-per-period = <1>;
-+	};
-+
-+	volume_encoder_keys: volume-encoder-keys {
-+		compatible = "gpio-keys";
-+		pinctrl-names = "default";
-+		pinctrl-0 = <&volume_mute_pins>;
-+		mute {
-+			label = "Volume Mute";
-+			linux,code = <113>;
-+			gpios = <&gpio1 RK_PC5 GPIO_ACTIVE_LOW>;
-+			debounce-interval = <20>;
-+		};
-+	};
-+};
-+
-+&pinctrl {
-+	volume_encoder {
-+		volume_encoder_pins: volume-encoder-pins {
-+			rockchip,pins = <1 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>,
-+					<1 RK_PC7 RK_FUNC_GPIO &pcfg_pull_up>;
-+		};
-+
-+		volume_mute_pins: volume-mute-pins {
-+			rockchip,pins = <1 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
-+		};
-+	};
-+};
-+
-+/*********I2S*************/
-+&i2s0_8ch {
-+	status = "okay";
-+	rockchip,src4192-compat-mode;
-+};
-+
-+/******EXT_AUDIO_CODEC*****/
-+&mycodec {
-+	status = "okay";
-+};
-+
-+
-+/**********SPI_FLASH**********/
-+&sfc {
-+	status = "okay";
-+	flash@0 {
-+		compatible = "spi-nand";
-+		reg = <0>;
-+		spi-max-frequency = <75000000>;
-+		spi-rx-bus-width = <4>;
-+		spi-tx-bus-width = <1>;
-+	};
-+	
-+};
-+
-+
-+/*********SERIAL_DEBUG_CONSOLE******/
-+&fiq_debugger {
-+	status = "okay";
-+};
-+
-+
-+/**********SDMMC**********/
-+&sdmmc {
-+	max-frequency = <50000000>;
-+	no-sdio;
-+	no-mmc;
-+	bus-width = <4>;
-+	cap-mmc-highspeed;
-+	cap-sd-highspeed;
-+	disable-wp;
-+	pinctrl-names = "default";
-+	pinctrl-0 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_det &sdmmc0_bus4>;
-+	status = "disable";
-+};
-+
-+/**********EMMC*************/
-+&emmc {
-+        status = "disable";
-+};
-+
-+/**********ETH**********/
-+&gmac {
-+	status = "okay";
-+};
-+
-+/**********USB**********/
-+&usbdrd_dwc3 {
-+	status = "okay";
-+	dr_mode = "otg";
-+};
-+
-+/**********I2C**********/
-+&i2c1 {
-+ 	status = "okay";
-+ 	pinctrl-0 = <&i2c1m1_xfer>;
-+ 	clock-frequency = <100000>;
-+ };
-+&i2c3 {
-+	status = "disable";
-+	pinctrl-0 = <&i2c3m1_xfer>;
-+	clock-frequency = <100000>;
-+};
-+
-+/**********SPI**********/
-+&spi0 {
-+	status = "disable";
-+	pinctrl-names = "default";
-+	pinctrl-0 = <&spi0m0_pins>;
-+	cs-gpios = <&gpio1 RK_PC0 1>;
-+	// cs-gpios = <&gpio1 26 1>;
-+	#address-cells = <1>;
-+	#size-cells = <0>;
-+	spidev@0 {
-+		compatible = "rockchip,spidev";
-+		spi-max-frequency = <50000000>;
-+		reg = <0>;
-+	};
-+};
-+
-+/******REAL_TIME_CLOCK******/
-+&rtc {
-+	status = "disable";
-+};
-+
-+/*********TSADC*********/
-+&tsadc {
-+	status = "okay";
-+};
-diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/scripts/dtc/include-prefixes/arm/rv1106_pll.dts linux-rockchip-rk-6.1-rkr6.1_modify/scripts/dtc/include-prefixes/arm/rv1106_pll.dts
---- linux-rockchip-rk-6.1-rkr6.1_orig/scripts/dtc/include-prefixes/arm/rv1106_pll.dts	1970-01-01 01:00:00.000000000 +0100
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/scripts/dtc/include-prefixes/arm/rv1106_pll.dts	2026-07-16 20:33:17.713679626 +0200
-@@ -0,0 +1,154 @@
-+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
-+/*
-+ * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
-+ */
-+
-+/dts-v1/;
-+
-+#include "rv1106.dtsi"
-+#include "rv1106_pll-ipc.dtsi"
-+#include "rv1106-pinctrl.dtsi"
-+/ {
-+	model = "Luckfox Pico Max";
-+	compatible = "rockchip,rv1106";
-+	
-+	nvmem-cells = <&otp_id>;
-+	nvmem-cell-names = "serial-number";
-+	serial-number;
-+
-+	volume_encoder: volume-encoder {
-+		compatible = "rotary-encoder";
-+		label = "PureFox Volume Encoder";
-+		pinctrl-names = "default";
-+		pinctrl-0 = <&volume_encoder_pins>;
-+		gpios = <&gpio1 RK_PC6 GPIO_ACTIVE_LOW>, <&gpio1 RK_PC7 GPIO_ACTIVE_LOW>;
-+		linux,axis = <7>;
-+		rotary-encoder,encoding = "gray";
-+		rotary-encoder,relative-axis;
-+		rotary-encoder,steps-per-period = <1>;
-+	};
-+
-+	volume_encoder_keys: volume-encoder-keys {
-+		compatible = "gpio-keys";
-+		pinctrl-names = "default";
-+		pinctrl-0 = <&volume_mute_pins>;
-+		mute {
-+			label = "Volume Mute";
-+			linux,code = <113>;
-+			gpios = <&gpio1 RK_PC5 GPIO_ACTIVE_LOW>;
-+			debounce-interval = <20>;
-+		};
-+	};
-+};
-+
-+&pinctrl {
-+	volume_encoder {
-+		volume_encoder_pins: volume-encoder-pins {
-+			rockchip,pins = <1 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>,
-+					<1 RK_PC7 RK_FUNC_GPIO &pcfg_pull_up>;
-+		};
-+
-+		volume_mute_pins: volume-mute-pins {
-+			rockchip,pins = <1 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
-+		};
-+	};
-+};
-+
-+/*********I2S*************/
-+&i2s0_8ch {
-+	status = "okay";
-+};
-+
-+/******EXT_AUDIO_CODEC*****/
-+&mycodec {
-+	status = "okay";
-+};
-+
-+
-+/**********SPI_FLASH**********/
-+&sfc {
-+	status = "okay";
-+	flash@0 {
-+		compatible = "spi-nand";
-+		reg = <0>;
-+		spi-max-frequency = <75000000>;
-+		spi-rx-bus-width = <4>;
-+		spi-tx-bus-width = <1>;
-+	};
-+	
-+};
-+
-+
-+/*********SERIAL_DEBUG_CONSOLE******/
-+&fiq_debugger {
-+	status = "okay";
-+};
-+
-+
-+/**********SDMMC**********/
-+&sdmmc {
-+	max-frequency = <50000000>;
-+	no-sdio;
-+	no-mmc;
-+	bus-width = <4>;
-+	cap-mmc-highspeed;
-+	cap-sd-highspeed;
-+	disable-wp;
-+	pinctrl-names = "default";
-+	pinctrl-0 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_det &sdmmc0_bus4>;
-+	status = "disable";
-+};
-+
-+/**********EMMC*************/
-+&emmc {
-+        status = "disable";
-+};
-+
-+/**********ETH**********/
-+&gmac {
-+	status = "okay";
-+};
-+
-+/**********USB**********/
-+&usbdrd_dwc3 {
-+	status = "okay";
-+	dr_mode = "otg";
-+};
-+
-+/**********I2C**********/
-+&i2c1 {
-+ 	status = "okay";
-+ 	pinctrl-0 = <&i2c1m1_xfer>;
-+ 	clock-frequency = <100000>;
-+ };
-+&i2c3 {
-+	status = "disable";
-+	pinctrl-0 = <&i2c3m1_xfer>;
-+	clock-frequency = <100000>;
-+};
-+
-+/**********SPI**********/
-+&spi0 {
-+	status = "disable";
-+	pinctrl-names = "default";
-+	pinctrl-0 = <&spi0m0_pins>;
-+	cs-gpios = <&gpio1 RK_PC0 1>;
-+	// cs-gpios = <&gpio1 26 1>;
-+	#address-cells = <1>;
-+	#size-cells = <0>;
-+	spidev@0 {
-+		compatible = "rockchip,spidev";
-+		spi-max-frequency = <50000000>;
-+		reg = <0>;
-+	};
-+};
-+
-+/******REAL_TIME_CLOCK******/
-+&rtc {
-+	status = "disable";
-+};
-+
-+/*********TSADC*********/
-+&tsadc {
-+	status = "okay";
-+};
 diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/codecs/dummy-codec.c
 --- linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c	2025-07-03 12:59:45.000000000 +0200
 +++ linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/codecs/dummy-codec.c	2026-03-04 22:01:53.049987406 +0100
@@ -2479,10 +1849,9 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c linux
  	},
  	.ops = &dummy_codec_dai_ops,
  };
-diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c
---- linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c	2025-07-03 12:59:45.000000000 +0200
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c	2026-07-19 22:12:36.596958928 +0200
-@@ -1,31 +1,46 @@
+--- linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c
++++ linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c
+@@ -1,31 +1,47 @@
 -// SPDX-License-Identifier: GPL-2.0-only
 -// ALSA SoC Audio Layer - Rockchip I2S/TDM Controller driver
 -
@@ -2523,6 +1892,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +#include <linux/random.h>
 +#include <linux/math64.h>
 +#include <linux/version.h>
++#include <linux/vmalloc.h>
  #include <sound/pcm_params.h>
 +#include <sound/dmaengine_pcm.h>
 +#include <sound/soc.h>
@@ -2547,7 +1917,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
  #define DRV_NAME "rockchip-i2s-tdm"
  
-@@ -33,518 +48,619 @@
+@@ -33,518 +49,622 @@
  #define HAVE_SYNC_RESET
  #endif
  
@@ -2761,6 +2131,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    u32 volume_gain_q15;
 +    snd_pcm_uframes_t volume_appl_ptr;
 +    bool volume_appl_ptr_valid;
++    void *volume_shadow;
++    size_t volume_shadow_bytes;
 +    bool mute;
 +    struct gpio_desc *mute_gpio;
 +    struct gpio_desc *mute_inv_gpio;  /* Inverted mute signal (GPIO2_A5, pin 69) */
@@ -2824,6 +2196,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +static void rockchip_i2s_tdm_apply_mute(struct rk_i2s_tdm_dev *i2s_tdm, bool enable);
 +static void rockchip_i2s_tdm_tx_path_config(struct rk_i2s_tdm_dev *i2s_tdm, int num);
 +static void rockchip_i2s_tdm_handle_dsd_switch(struct rk_i2s_tdm_dev *i2s_tdm, bool enable_dsd);
++static void rockchip_i2s_tdm_refresh_queued_pcm(struct rk_i2s_tdm_dev *i2s_tdm);
 +
 +
 +
@@ -3601,7 +2974,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +670,3464 @@
+@@ -554,3020 +674,3530 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -6660,6 +6033,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +
 +    i2s_tdm->volume = volume;
 +    rockchip_i2s_tdm_set_volume_gain(i2s_tdm, volume);
++    rockchip_i2s_tdm_refresh_queued_pcm(i2s_tdm);
 +    
 +    dev_info(i2s_tdm->dev, "Volume changed: %d%% -> %d%%\n",
 +             old_volume, volume);
@@ -7262,6 +6636,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        /* PLAYBACK: copy from user and process */
 +        if (copy_from_user(dma_area, buf, bytes))
 +            return -EFAULT;
++
++        if (!i2s_tdm->dsd_mode_active && i2s_tdm->volume_shadow &&
++            pos + bytes <= i2s_tdm->volume_shadow_bytes)
++            memcpy((u8 *)i2s_tdm->volume_shadow + pos, dma_area, bytes);
 +        
 +        /* DSD MUTE: Replace data with silence signal (50% duty cycle) */
 +        if ((i2s_tdm->mute || i2s_tdm->auto_mute_active) && i2s_tdm->dsd_mode_active &&
@@ -7394,6 +6772,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
 +
 +    if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++        if (i2s_tdm->volume_shadow_bytes != substream->runtime->dma_bytes) {
++            vfree(i2s_tdm->volume_shadow);
++            i2s_tdm->volume_shadow = vzalloc(substream->runtime->dma_bytes);
++            i2s_tdm->volume_shadow_bytes = i2s_tdm->volume_shadow ?
++                substream->runtime->dma_bytes : 0;
++            if (!i2s_tdm->volume_shadow)
++                dev_warn(component->dev, "Volume shadow allocation failed\n");
++        }
 +        i2s_tdm->volume_appl_ptr = substream->runtime->control->appl_ptr;
 +        i2s_tdm->volume_appl_ptr_valid = true;
 +    }
@@ -7432,6 +6818,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    while (frames) {
 +        offset = i2s_tdm->volume_appl_ptr % runtime->buffer_size;
 +        chunk = min(frames, runtime->buffer_size - offset);
++        if (i2s_tdm->volume_shadow)
++            memcpy((u8 *)i2s_tdm->volume_shadow + frames_to_bytes(runtime, offset),
++                   runtime->dma_area + frames_to_bytes(runtime, offset),
++                   frames_to_bytes(runtime, chunk));
 +        rockchip_i2s_tdm_process_pcm(i2s_tdm, runtime,
 +            runtime->dma_area + frames_to_bytes(runtime, offset),
 +            frames_to_bytes(runtime, chunk));
@@ -7442,6 +6832,49 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    }
 +
 +    return 0;
++}
++
++/* Rebuild not-yet-transmitted PCM from the unmodified shadow ring buffer. */
++static void rockchip_i2s_tdm_refresh_queued_pcm(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    struct snd_pcm_substream *substream;
++    struct snd_pcm_runtime *runtime;
++    snd_pcm_uframes_t appl_ptr, hw_ptr, frames, offset, chunk, guard;
++
++    substream = i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK];
++    if (!substream || i2s_tdm->dsd_mode_active || !i2s_tdm->volume_shadow)
++        return;
++
++    runtime = substream->runtime;
++    if (!runtime || runtime->status->state != SNDRV_PCM_STATE_RUNNING ||
++        !runtime->buffer_size)
++        return;
++
++    appl_ptr = READ_ONCE(runtime->control->appl_ptr);
++    hw_ptr = READ_ONCE(runtime->status->hw_ptr);
++    if (appl_ptr >= hw_ptr)
++        frames = appl_ptr - hw_ptr;
++    else
++        frames = runtime->boundary - hw_ptr + appl_ptr;
++    if (frames > runtime->buffer_size)
++        return;
++
++    /* Leave two periods alone: DMA may already be consuming the current one. */
++    guard = min(frames, runtime->period_size * 2);
++    frames -= guard;
++    offset = (hw_ptr + guard) % runtime->buffer_size;
++
++    while (frames) {
++        chunk = min(frames, runtime->buffer_size - offset);
++        memcpy(runtime->dma_area + frames_to_bytes(runtime, offset),
++               (u8 *)i2s_tdm->volume_shadow + frames_to_bytes(runtime, offset),
++               frames_to_bytes(runtime, chunk));
++        rockchip_i2s_tdm_process_pcm(i2s_tdm, runtime,
++            runtime->dma_area + frames_to_bytes(runtime, offset),
++            frames_to_bytes(runtime, chunk));
++        offset = (offset + chunk) % runtime->buffer_size;
++        frames -= chunk;
++    }
 +}
 +
 +/* All explicitly supported rates: standard PCM, ultra-high PCM (to 768kHz), and DSD native.
@@ -7786,6 +7219,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -		__func__, i2s_tdm->resume_deferred_ms);
 -
 -	return 0;
++    if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++        vfree(i2s_tdm->volume_shadow);
++        i2s_tdm->volume_shadow = NULL;
++        i2s_tdm->volume_shadow_bytes = 0;
++        i2s_tdm->volume_appl_ptr_valid = false;
++    }
 +    i2s_tdm->substreams[substream->stream] = NULL;
  }
  
