@@ -244,6 +244,7 @@ void get_active_service(char* service, pid_t *pid) {
         {"shairport-sync", "shairport"},
         {"librespot", "spotify"},
         {"qobuz-connect", "qobuz"},
+        {"celmusper-transport", "celmusper"},
         {"tidalconnect", "tidalconnect"},
         {NULL, NULL}
     };

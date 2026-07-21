@@ -1,0 +1,10 @@
+config BR2_PACKAGE_CELMUSPER_I2S_SHIM
+	bool "celmusper-i2s-shim"
+	depends on BR2_PACKAGE_ALSA_LIB
+	help
+	  LD_PRELOAD compatibility shim for CelMusper Transport.
+
+	  It presents the Rockchip I2S card as a stereo USB-audio DAC to
+	  CelMusper's USB-only enumerator, then redirects its hw:0,0 PCM
+	  open to the ALSA default route. The route expands stereo into the
+	  board's four I2S slots.
