@@ -1394,6 +1394,30 @@ $(document).ready(function () {
             scheduleVolumeUpdate(this.value, true);
         });
 
+        // Wheel is active only over the volume slider.  Use the same request
+        // coalescing path as drag/keyboard control, so fast scrolling does
+        // not create a burst of ALSA updates on the single-core SBC.
+        volumeSlider.addEventListener('wheel', function(event) {
+            if (this.disabled || event.deltaY === 0) {
+                return;
+            }
+
+            event.preventDefault();
+            const step = Number(this.step) || 1;
+            const direction = event.deltaY < 0 ? 1 : -1;
+            const nextVolume = Math.max(Number(this.min) || 0,
+                Math.min(Number(this.max) || 100,
+                    Number(this.value) + direction * step));
+
+            if (nextVolume === Number(this.value)) {
+                return;
+            }
+
+            this.value = nextVolume;
+            volumeDisplay.textContent = String(nextVolume);
+            scheduleVolumeUpdate(String(nextVolume), false);
+        }, {passive: false});
+
         // Начальное состояние загрузится через polling
     }
 
