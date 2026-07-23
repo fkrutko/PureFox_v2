@@ -7,10 +7,15 @@ case "$1" in
         # Keep the DHCP resolver as the fast and reliable default.
         [ "${DOH_PROXY_ENABLE:-1}" = "1" ] || exit 0
         cp -f /etc/resolv.conf "$RESOLV_BACKUP" 2>/dev/null || true
+        DHCP_IFACE=$(ip route show default 2>/dev/null | awk 'NR == 1 { print $5 }')
+        DHCP_DNS=$(awk -v iface="$DHCP_IFACE" '$1 == "nameserver" && $0 ~ "# " iface "$" { print $2; exit }' "$RESOLV_BACKUP" 2>/dev/null)
+        [ -n "$DHCP_DNS" ] || DHCP_DNS=$(awk '/^nameserver[[:space:]]+/ { print $2; exit }' "$RESOLV_BACKUP" 2>/dev/null)
         killall doh-proxy 2>/dev/null
-        /usr/sbin/doh-proxy &
+        nohup /usr/sbin/doh-proxy "$DHCP_DNS" </dev/null >/dev/null 2>&1 &
+        # DoH needs a valid clock for TLS.  Do not replace resolv.conf until
+        # the local listener has answered a real query.
         i=0
-        while [ "$i" -lt 10 ]; do
+        while [ "$i" -lt 3 ]; do
             if nslookup cloudflare-dns.com 127.0.0.1 >/dev/null 2>&1; then
                 echo "nameserver 127.0.0.1" > /etc/resolv.conf
                 exit 0
