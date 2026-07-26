@@ -2,7 +2,6 @@
 
 **Network audio endpoint on Luckfox Pico Max / Ultra with external clock support**
 
-<img title="" src="images/2026-05-24-09-29-43-image.png" alt="" width="519">
 
 ## About
 
@@ -68,7 +67,6 @@ SSH access is enabled: login `root`, password: `purefox`.
 - **EXT** — external master clock
 - **PLL** — RV1106 frequency synthesizer. The quality of the internal PLL is surprisingly high. According to numerous subjective tests by audio experts, the internal PLL sound quality rivals that of expensive external clock generators.
 
-<img title="" src="images/2026-05-24-10-02-10-image.png" alt="" width="389">
 
 ### USB (UAC2 Gadget)
 

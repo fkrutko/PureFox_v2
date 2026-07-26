@@ -15,6 +15,9 @@ buildroot/*.diff
 .claude
 .deepseek
 .codex
+.agents
 AGENTS.md
+tests
+
 
 

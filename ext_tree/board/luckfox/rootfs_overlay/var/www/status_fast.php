@@ -80,6 +80,20 @@ $status = [
     'source' => 'php_fallback'
 ];
 
+function findUsbDacCard() {
+    foreach (glob('/sys/class/sound/card*/device') as $devicePath) {
+        $resolvedPath = realpath($devicePath);
+        if ($resolvedPath === false || strpos($resolvedPath, '/usb') === false) {
+            continue;
+        }
+
+        $cardName = basename(dirname($devicePath));
+        return ctype_digit(substr($cardName, 4)) ? (int)substr($cardName, 4) : null;
+    }
+
+    return null;
+}
+
 $boot_id = trim((string) @file_get_contents('/proc/sys/kernel/random/boot_id'));
 if ($boot_id !== '') {
     $status['boot_id'] = $boot_id;
@@ -111,11 +125,12 @@ if (file_exists($output_file)) {
 }
 
 // USB DAC check
-$status['usb_dac'] = file_exists('/sys/class/sound/card1');
+$usb_card_number = findUsbDacCard();
+$status['usb_dac'] = $usb_card_number !== null;
 
 // Get volume - try available controls
 // Determine which card to check based on ALSA state and physical USB DAC presence
-$card_number = ($status['alsa_state'] === 'usb' && $status['usb_dac']) ? 1 : 0;
+$card_number = ($status['alsa_state'] === 'usb' && $status['usb_dac']) ? $usb_card_number : 0;
 
 $volume_controls = ['PCM', 'Master'];
 

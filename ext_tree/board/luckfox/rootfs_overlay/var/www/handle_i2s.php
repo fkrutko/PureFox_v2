@@ -1,15 +1,32 @@
 <?php
 require_once 'config.php';
+require_once 'audio_transition.php';
 
 // Path to configuration file
 $config_file = '/etc/i2s.conf';
+
+function isI2sOutput() {
+    $output_file = '/etc/output';
+    return file_exists($output_file)
+        && strtoupper(trim((string) file_get_contents($output_file))) === 'I2S';
+}
+
+$audioLock = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $audioLock = acquireAudioTransitionLock();
+    if (!$audioLock) {
+        http_response_code(409);
+        echo 'Audio transition already in progress';
+        exit;
+    }
+}
 
 // If mode is changed
 if (isset($_POST['mode'])) {
     $mode = $_POST['mode'];
     if (in_array($mode, ['pll', 'ext'])) {
         $script = ($mode === 'pll') ? '/opt/2pll.sh' : '/opt/2ext.sh';
-        exec('/usr/bin/sudo ' . escapeshellcmd($script) . ' 2>&1', $output, $returnVar);
+        exec('/usr/bin/sudo /bin/sh -c ' . escapeshellarg('PUREFOX_AUDIO_LOCK_HELD=1 ' . escapeshellcmd($script)) . ' 2>&1', $output, $returnVar);
     }
 }
 
@@ -24,9 +41,14 @@ if (isset($_POST['submode'])) {
         echo 'Submode change not allowed: USB to I2S requires STD mode';
         exit;
     }
+    if ($submode !== 'std' && !isI2sOutput()) {
+        http_response_code(409);
+        echo 'Submode change requires I2S output';
+        exit;
+    }
     if (in_array($submode, ['std', 'lr', 'plr', '8ch'])) {
         $script = "/opt/2_$submode.sh";
-        exec('/usr/bin/sudo ' . escapeshellcmd($script) . ' 2>&1', $output, $returnVar);
+        exec('/usr/bin/sudo /bin/sh -c ' . escapeshellarg('PUREFOX_AUDIO_LOCK_HELD=1 ' . escapeshellcmd($script)) . ' 2>&1', $output, $returnVar);
     }
 }
 
@@ -43,7 +65,8 @@ if (isset($_POST['mclk'])) {
             }
         }
         if (!in_array($cur_mode, ['ext', 'pll'])) $cur_mode = 'ext';
-        exec('/usr/bin/sudo /opt/2_' . $mclk . '_' . $cur_mode . '.sh 2>&1', $output, $returnVar);
+        $script = '/opt/2_' . $mclk . '_' . $cur_mode . '.sh';
+        exec('/usr/bin/sudo /bin/sh -c ' . escapeshellarg('PUREFOX_AUDIO_LOCK_HELD=1 ' . escapeshellcmd($script)) . ' 2>&1', $output, $returnVar);
     }
 }
 
@@ -168,4 +191,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'getStatus') {
     echo json_encode($result);
     exit;
 }
+
+releaseAudioTransitionLock($audioLock);
 ?>

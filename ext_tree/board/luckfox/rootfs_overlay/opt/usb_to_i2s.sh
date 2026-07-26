@@ -1,11 +1,13 @@
 #!/bin/sh
 
+. /opt/audio-transition-lock.sh
+
 # USBtoI2S mode: I2S audio output + USB gadget (UAC2)
 MODE_FILE="/etc/usb_to_i2s.state"
 MODULES_DIR="/lib/modules"
 
 # Stop all running players and remove symlinks
-sh -c '/etc/init.d/S95* stop' 2>/dev/null || true
+run_without_audio_lock_fd sh -c '/etc/init.d/S95* stop' 2>/dev/null || true
 rm -f /etc/init.d/S95*
 ln -sf  /etc/rc.pure/S98uac2 /etc/init.d/S98uac2
 ln -sf  /etc/rc.pure/S95uac2_router /etc/init.d/S99uac2_router
@@ -34,11 +36,11 @@ insmod $MODULES_DIR/dwc3_gadget.ko 2>/dev/null || true
 sleep 1.0
 
 # Start UAC2 gadget and router SYNCHRONOUSLY (critical services)
-/etc/init.d/S98uac2 restart
-/etc/init.d/S99uac2_router start
+run_without_audio_lock_fd /etc/init.d/S98uac2 restart
+run_without_audio_lock_fd /etc/init.d/S99uac2_router start
 
 # 3. Restart status monitor in BACKGROUND (can wait for services to stabilize)
-/etc/init.d/S01statusmonitor restart >/dev/null 2>&1 &
+run_without_audio_lock_fd /etc/init.d/S40statusmonitor restart >/dev/null 2>&1 &
 sync
 
 echo "USBtoI2S mode enabled"

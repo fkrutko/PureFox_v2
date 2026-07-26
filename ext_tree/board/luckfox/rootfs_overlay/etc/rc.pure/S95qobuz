@@ -1,8 +1,10 @@
 #!/bin/sh
 
+. /opt/audio-card-utils.sh
+
 get_output_device() {
     if [ -f /etc/output ] && grep -q "USB" /etc/output; then
-        echo "hw:1"
+        usb_audio_device || echo "default"
     else
         echo "default"
     fi

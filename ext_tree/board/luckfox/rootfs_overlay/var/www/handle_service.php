@@ -1,5 +1,6 @@
 <?php
 header('Content-Type: application/json; charset=utf-8');
+require_once 'audio_transition.php';
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
@@ -9,6 +10,7 @@ function logMessage($message) {
 
 function executeCommand($command) {
     logMessage("Executing: $command");
+    $command = 'PUREFOX_AUDIO_LOCK_HELD=1 ' . $command;
     $output = shell_exec("/usr/bin/sudo /bin/sh -c " . escapeshellarg($command) . " 2>&1");
     logMessage("Output: " . trim((string)$output));
     return trim((string)$output);
@@ -27,7 +29,7 @@ function stopProcessGroup($processList) {
     executeCommand("killall -9 $plist 2>/dev/null || true");
 }
 
-function waitForProcess($process, $timeoutMs = 1000) {
+function waitForProcess($process, $timeoutMs = 5000) {
     $attempts = (int)($timeoutMs / 100);
     for ($attempt = 0; $attempt < $attempts; $attempt++) {
         $pid = trim((string)shell_exec('/bin/pidof ' . escapeshellarg($process) . ' 2>/dev/null'));
@@ -70,14 +72,9 @@ if (!file_exists($scriptPath)) {
     fail("Player script not found: $scriptPath");
 }
 
-$lockFile = '/tmp/player_switch.lock';
-$lockFp = fopen($lockFile, 'c');
+$lockFp = acquireAudioTransitionLock();
 if (!$lockFp) {
-    fail("Cannot open lock file");
-}
-if (!flock($lockFp, LOCK_EX | LOCK_NB)) {
-    fclose($lockFp);
-    fail("Service switch already in progress");
+    fail("Audio transition already in progress");
 }
 
 try {
@@ -100,13 +97,12 @@ try {
     // Start selected player in foreground of this shell call (script itself backgrounds daemons as needed)
     $startOutput = executeCommand('/etc/init.d/S95player start');
 
-    // Publish the transition immediately. status_monitor verifies the actual
-    // process state and pushes it to connected browsers through SSE.
-    executeCommand('/opt/dbus_notify ServiceChanged ' . escapeshellarg($playerToStart) . ' 2>/dev/null || true');
-
-    // Confirm the actual process without a fixed one-second delay.
+    // Confirm the actual process before publishing the new active service.
     $proc = $players[$playerToStart]['process'];
     $confirmed = waitForProcess($proc);
+    if ($confirmed) {
+        executeCommand('/opt/dbus_notify ServiceChanged ' . escapeshellarg($playerToStart) . ' 2>/dev/null || true');
+    }
 
     echo json_encode([
         'status' => $confirmed ? 'success' : 'error',
@@ -115,7 +111,6 @@ try {
         'output' => $startOutput
     ]);
 } finally {
-    flock($lockFp, LOCK_UN);
-    fclose($lockFp);
+    releaseAudioTransitionLock($lockFp);
 }
 ?>

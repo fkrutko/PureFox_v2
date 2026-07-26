@@ -1,4 +1,5 @@
 #include <dirent.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <alsa/asoundlib.h>
@@ -26,17 +27,56 @@ static volatile sig_atomic_t running = 1;
 
 static void stop(int sig) { (void)sig; running = 0; }
 
+static int find_usb_audio_card(void)
+{
+	DIR *sound_dir;
+	struct dirent *entry;
+	char device_link[PATH_MAX];
+	char device_path[PATH_MAX];
+	int card = -1;
+
+	sound_dir = opendir("/sys/class/sound");
+	if (!sound_dir)
+		return -1;
+
+	while ((entry = readdir(sound_dir)) != NULL) {
+		if (strncmp(entry->d_name, "card", 4) != 0 ||
+		    !isdigit((unsigned char)entry->d_name[4]))
+			continue;
+
+		snprintf(device_link, sizeof(device_link),
+			 "/sys/class/sound/%s/device", entry->d_name);
+		if (!realpath(device_link, device_path))
+			continue;
+
+		if (strstr(device_path, "/usb") != NULL) {
+			card = (int)strtol(entry->d_name + 4, NULL, 10);
+			break;
+		}
+	}
+
+	closedir(sound_dir);
+	return card;
+}
+
 static const char *active_mixer_device(void)
 {
 	FILE *file;
 	char output[16];
+	static char device_name[16];
+	int usb_card;
 
 	file = fopen("/etc/output", "r");
 	if (file) {
 		if (fgets(output, sizeof(output), file) &&
 		    !strncmp(output, "USB", 3)) {
 			fclose(file);
-			return "hw:1";
+			usb_card = find_usb_audio_card();
+			if (usb_card >= 0) {
+				snprintf(device_name, sizeof(device_name), "hw:%d", usb_card);
+				return device_name;
+			}
+			return NULL;
 		}
 		fclose(file);
 	}
@@ -66,11 +106,13 @@ static void set_cached_mixer_id(snd_mixer_selem_id_t *id)
 static int open_pcm_mixer(snd_mixer_t **mixer, snd_mixer_elem_t **elem)
 {
 	snd_mixer_selem_id_t *id;
+	const char *device;
 
 	*mixer = NULL;
 	*elem = NULL;
-	if (snd_mixer_open(mixer, 0) < 0 ||
-	    snd_mixer_attach(*mixer, active_mixer_device()) < 0 ||
+	device = active_mixer_device();
+	if (!device || snd_mixer_open(mixer, 0) < 0 ||
+	    snd_mixer_attach(*mixer, device) < 0 ||
 	    snd_mixer_selem_register(*mixer, NULL, NULL) < 0 ||
 	    snd_mixer_load(*mixer) < 0)
 		goto error;

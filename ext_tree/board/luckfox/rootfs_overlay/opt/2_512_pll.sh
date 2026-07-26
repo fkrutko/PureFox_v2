@@ -1,6 +1,8 @@
 #!/bin/sh
 # Script to set MCLK = 512x in PLL mode
 
+. /opt/audio-transition-lock.sh
+
 # Set MCLK multiplier via sysfs
 echo 512 > /sys/devices/platform/ffae0000.i2s/mclk_multiplier
 

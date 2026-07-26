@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <math.h>
 #include <dirent.h>
 #include <ctype.h>
@@ -352,10 +353,41 @@ void get_alsa_state(char* state) {
     }
 }
 
+static int find_usb_audio_card(void)
+{
+    DIR *sound_dir;
+    struct dirent *entry;
+    char device_link[PATH_MAX];
+    char device_path[PATH_MAX];
+    int card = -1;
+
+    sound_dir = opendir("/sys/class/sound");
+    if (!sound_dir)
+        return -1;
+
+    while ((entry = readdir(sound_dir)) != NULL) {
+        if (strncmp(entry->d_name, "card", 4) != 0 ||
+            !isdigit((unsigned char)entry->d_name[4]))
+            continue;
+
+        snprintf(device_link, sizeof(device_link),
+                 "/sys/class/sound/%s/device", entry->d_name);
+        if (!realpath(device_link, device_path))
+            continue;
+
+        if (strstr(device_path, "/usb") != NULL) {
+            card = (int)strtol(entry->d_name + 4, NULL, 10);
+            break;
+        }
+    }
+
+    closedir(sound_dir);
+    return card;
+}
+
 // Check USB DAC
 int check_usb_dac() {
-    struct stat st;
-    return (stat("/sys/class/sound/card1", &st) == 0) ? 1 : 0;
+    return find_usb_audio_card() >= 0;
 }
 
 // Find and cache ALSA mixer control (expensive operation, call only when DAC changes)
@@ -707,12 +739,17 @@ static bool get_dbus_volume(DBusMessage *message, int *volume)
 void check_usb_controls(int* volume_available, int* mute_available) {
     *volume_available = 0;
     *mute_available = 0;
-    
+    int usb_card = find_usb_audio_card();
+    char device_name[16];
     snd_mixer_t *mixer = NULL;
     snd_mixer_elem_t *elem;
-    
+
+    if (usb_card < 0)
+        return;
+    snprintf(device_name, sizeof(device_name), "hw:%d", usb_card);
+
     if (snd_mixer_open(&mixer, 0) >= 0) {
-        if (snd_mixer_attach(mixer, "hw:1") >= 0) {
+        if (snd_mixer_attach(mixer, device_name) >= 0) {
             if (snd_mixer_selem_register(mixer, NULL, NULL) >= 0) {
                 if (snd_mixer_load(mixer) >= 0) {
                     for (elem = snd_mixer_first_elem(mixer); elem; elem = snd_mixer_elem_next(elem)) {

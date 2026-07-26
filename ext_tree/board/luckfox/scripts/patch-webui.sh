@@ -3,20 +3,88 @@
 # Использование: patch-webui.sh <архив_aplayer.tar.gz> <архив_aprenderer.tar.gz> <версия>
 # Пример: patch-webui.sh dl/aplayer/aplayer-arm32.tar.gz dl/aprenderer/aprenderer-arm32.tar.gz 2.18
 
-set -e
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 APLAYER_ARCHIVE="${1:?Укажи путь к архиву aplayer}"
 APRENDERER_ARCHIVE="${2:?Укажи путь к архиву aprenderer}"
 VERSION="${3:?Укажи версию, например 2.18}"
 
-OVERLAY="${OVERLAY:-/mnt/sdb/PureFox_v2/ext_tree/board/luckfox/rootfs_overlay}"
+OVERLAY="${OVERLAY:-$SCRIPT_DIR/../rootfs_overlay}"
 TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
+PUBLISH_PENDING=0
+BACKUP_DIR="$TMPDIR/backup"
+STAGE_DIR="$TMPDIR/publish"
+RENDERER_SOURCE="$TMPDIR/aprenderer/renderer.html"
+APLAYER_SOURCE="$TMPDIR/aplayer/aplayer.html"
+DIMAS_SOURCE="$TMPDIR/aplayer/dimas/aplayer.html"
+RENDERER_TARGET="$OVERLAY/usr/aprenderer/renderer.html"
+APLAYER_TARGET="$OVERLAY/usr/aplayer/aplayer.html"
+DIMAS_TARGET="$OVERLAY/usr/aplayer/dimas/aplayer.html"
+
+rollback_publish() {
+    [ "$PUBLISH_PENDING" -eq 1 ] || return 0
+    echo "=== Откат публикации WebUI ===" >&2
+    cp "$BACKUP_DIR/renderer.html" "$RENDERER_TARGET"
+    cp "$BACKUP_DIR/aplayer.html" "$APLAYER_TARGET"
+    cp "$BACKUP_DIR/dimas-aplayer.html" "$DIMAS_TARGET"
+}
+
+cleanup() {
+    status=$?
+    trap - EXIT
+    rollback_publish
+    rm -rf "$TMPDIR"
+    exit "$status"
+}
+trap cleanup EXIT
+
+validate_input_pages() {
+    for page in "$RENDERER_SOURCE" "$APLAYER_SOURCE" "$DIMAS_SOURCE"; do
+        [ -f "$page" ] || {
+            echo "Missing expected WebUI page: $page" >&2
+            exit 1
+        }
+    done
+    for page in "$RENDERER_TARGET" "$APLAYER_TARGET" "$DIMAS_TARGET"; do
+        [ -f "$page" ] || {
+            echo "Missing overlay WebUI page: $page" >&2
+            exit 1
+        }
+    done
+}
+
+validate_patched_pages() {
+    grep -Fq "<title>APlayer Media Renderer ${VERSION}</title>" "$RENDERER_SOURCE"
+    grep -Fq "<title>Album Player ${VERSION}</title>" "$APLAYER_SOURCE"
+    grep -Fq "<title>Album Player ${VERSION}</title>" "$DIMAS_SOURCE"
+    grep -Fq 'id="api_cx"' "$APLAYER_SOURCE"
+    grep -Fq 'id="api_key"' "$APLAYER_SOURCE"
+}
+
+stage_and_publish() {
+    mkdir -p "$BACKUP_DIR" "$STAGE_DIR"
+    cp "$RENDERER_TARGET" "$BACKUP_DIR/renderer.html"
+    cp "$APLAYER_TARGET" "$BACKUP_DIR/aplayer.html"
+    cp "$DIMAS_TARGET" "$BACKUP_DIR/dimas-aplayer.html"
+
+    cp "$RENDERER_SOURCE" "$STAGE_DIR/renderer.html"
+    cp "$APLAYER_SOURCE" "$STAGE_DIR/aplayer.html"
+    cp "$DIMAS_SOURCE" "$STAGE_DIR/dimas-aplayer.html"
+
+    PUBLISH_PENDING=1
+    mv "$STAGE_DIR/renderer.html" "$RENDERER_TARGET"
+    mv "$STAGE_DIR/aplayer.html" "$APLAYER_TARGET"
+    mv "$STAGE_DIR/dimas-aplayer.html" "$DIMAS_TARGET"
+    PUBLISH_PENDING=0
+}
 
 echo "=== Извлекаю архивы ==="
 mkdir -p "$TMPDIR/aplayer" "$TMPDIR/aprenderer"
 tar xzf "$APLAYER_ARCHIVE"   -C "$TMPDIR/aplayer"   --strip-components=1
 tar xzf "$APRENDERER_ARCHIVE" -C "$TMPDIR/aprenderer" --strip-components=1
+validate_input_pages
 
 # ===================================================================
 # Общие блокировки для aplayer.html и renderer.html
@@ -51,14 +119,13 @@ apply_common() {
 # renderer.html
 # ===================================================================
 echo "=== renderer.html ==="
-apply_common "$TMPDIR/aprenderer/renderer.html" "APlayer Media Renderer"
-cp "$TMPDIR/aprenderer/renderer.html" "$OVERLAY/usr/aprenderer/renderer.html"
+apply_common "$RENDERER_SOURCE" "APlayer Media Renderer"
 
 # ===================================================================
 # aplayer.html (+ API поля)
 # ===================================================================
 echo "=== aplayer.html ==="
-F="$TMPDIR/aplayer/aplayer.html"
+F="$APLAYER_SOURCE"
 apply_common "$F" "Album Player"
 
 # Добавить API поля после строки с radio_pict
@@ -67,13 +134,11 @@ s|(1-10)</td></tr>|(1-10)  \&nbsp;\&nbsp; API cx \&nbsp;<input id="api_cx" style
 a\        <tr><td>API key \&nbsp; <input id="api_key" style="width:340px" type="text"></td></tr>
 }' "$F"
 
-cp "$F" "$OVERLAY/usr/aplayer/aplayer.html"
-
 # ===================================================================
 # dimas/aplayer.html
 # ===================================================================
 echo "=== dimas/aplayer.html ==="
-F="$TMPDIR/aplayer/dimas/aplayer.html"
+F="$DIMAS_SOURCE"
 
 # Версия
 sed -i "s|<title>Album Player [0-9.]*</title>|<title>Album Player ${VERSION}</title>|" "$F"
@@ -88,7 +153,8 @@ sed -i 's|id="cores0" type="radio" name="cores" checked|id="cores0" type="radio"
 sed -i 's|id="cores2" type="radio" name="cores"|id="cores2" type="radio" name="cores" disabled|' "$F"
 sed -i 's|id="CardNum" style="width:24px"|id="CardNum" style="width:24px" disabled|' "$F"
 
-cp "$F" "$OVERLAY/usr/aplayer/dimas/aplayer.html"
+validate_patched_pages
+stage_and_publish
 
 echo "=== Готово ==="
 echo "Версия $VERSION применена. Файлы в $OVERLAY/usr/"

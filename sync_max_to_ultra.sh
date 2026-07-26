@@ -7,6 +7,29 @@ cd "$SCRIPT_DIR"
 
 SRC_BRANCH="MAX_6.X"
 DST_BRANCH="ULTRA_6.X"
+SYNC_SUCCESS=0
+ON_DESTINATION_BRANCH=0
+DST_HEAD=""
+
+cleanup() {
+    status=$?
+    trap - EXIT
+
+    if [ "$status" -ne 0 ] && [ "$SYNC_SUCCESS" -eq 0 ] && [ "$ON_DESTINATION_BRANCH" -eq 1 ]; then
+        echo "ERROR: Sync failed; restoring $DST_BRANCH and returning to $SRC_BRANCH..." >&2
+        if [ -n "$DST_HEAD" ]; then
+            git reset --hard "$DST_HEAD" >/dev/null 2>&1 || \
+                echo "WARNING: Could not restore $DST_BRANCH to $DST_HEAD." >&2
+            git clean -fd >/dev/null 2>&1 || \
+                echo "WARNING: Could not remove untracked files created during sync." >&2
+        fi
+        git checkout "$SRC_BRANCH" >/dev/null 2>&1 || \
+            echo "WARNING: Could not return to $SRC_BRANCH automatically; inspect git status." >&2
+    fi
+
+    exit "$status"
+}
+trap cleanup EXIT
 
 echo "=== Syncing $SRC_BRANCH to $DST_BRANCH (preserving Ultra-specific files) ==="
 
@@ -17,11 +40,20 @@ if [ "$CURRENT_BRANCH" != "$SRC_BRANCH" ]; then
     exit 1
 fi
 
-# Check working tree is clean
-if ! git diff-index --quiet HEAD --; then
+# Check working tree is clean, including untracked files that checkout could overwrite.
+if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
     echo "ERROR: Working tree has uncommitted changes. Commit or stash them first."
     exit 1
 fi
+
+git rev-parse --verify --quiet "$SRC_BRANCH^{commit}" >/dev/null || {
+    echo "ERROR: Source branch not found: $SRC_BRANCH"
+    exit 1
+}
+git rev-parse --verify --quiet "$DST_BRANCH^{commit}" >/dev/null || {
+    echo "ERROR: Destination branch not found: $DST_BRANCH"
+    exit 1
+}
 
 # Ultra-specific files: storage type (eMMC vs MTD), DTS, boot, platform scripts
 EXCLUDE_PATTERNS=(
@@ -66,6 +98,7 @@ EXCLUDE_PATTERNS=(
 
 echo "Step 1: Switching to $DST_BRANCH branch..."
 git checkout "$DST_BRANCH"
+ON_DESTINATION_BRANCH=1
 
 SRC_HEAD=$(git rev-parse "$SRC_BRANCH")
 DST_HEAD=$(git rev-parse "$DST_BRANCH")
@@ -108,6 +141,7 @@ echo ""
 if [ ${#FILES_TO_SYNC[@]} -eq 0 ]; then
     echo "No files to sync!"
     git checkout "$SRC_BRANCH"
+    ON_DESTINATION_BRANCH=0
     exit 0
 fi
 
@@ -127,7 +161,6 @@ echo ""
 echo "Step 5: Enabling new synced packages in the Ultra defconfig..."
 MAX_DEFCONFIG="ext_tree/configs/luckfox_pico_max_defconfig"
 ULTRA_DEFCONFIG="ext_tree/configs/luckfox_pico_ultra_defconfig"
-ULTRA_POST_BUILD="ext_tree/board/luckfox/scripts/post-build.sh"
 PACKAGE_SYMBOLS=()
 
 # Defconfigs are intentionally Ultra-specific. Only propagate explicitly
@@ -166,22 +199,6 @@ else
     done
 fi
 
-# Keep the common network identity without copying the Ultra-specific
-# defconfig or post-build script from MAX. S01RkLunch is synced above.
-if [ -f "$ULTRA_DEFCONFIG" ]; then
-    sed -i 's/^BR2_TARGET_GENERIC_HOSTNAME=.*/BR2_TARGET_GENERIC_HOSTNAME="purefox"/' \
-        "$ULTRA_DEFCONFIG"
-    git add "$ULTRA_DEFCONFIG"
-    echo "  [NETWORK] hostname set to purefox"
-fi
-
-if [ -f "$ULTRA_POST_BUILD" ] && ! grep -qx 'rm -f \$TARGET_DIR/etc/init.d/S40network' "$ULTRA_POST_BUILD"; then
-    sed -i '/rm -f \$TARGET_DIR\/etc\/init.d\/\*mpd/a rm -f $TARGET_DIR/etc/init.d/S40network' \
-        "$ULTRA_POST_BUILD"
-    git add "$ULTRA_POST_BUILD"
-    echo "  [NETWORK] removed duplicate S40network startup"
-fi
-
 echo ""
 echo "Step 6: Updating branding (MAX → Ultra)..."
 INDEX_PHP="ext_tree/board/luckfox/rootfs_overlay/var/www/index.php"
@@ -203,3 +220,5 @@ echo ""
 echo "Review the changes with: git diff --cached"
 echo "Commit with: git commit -m 'Sync from $SRC_BRANCH'"
 echo "Discard with: git checkout $SRC_BRANCH && git checkout $DST_BRANCH -- . && git checkout $SRC_BRANCH"
+
+SYNC_SUCCESS=1
