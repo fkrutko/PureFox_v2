@@ -56,6 +56,32 @@ function getSystemStatus() {
     ];
 }
 
+// Prefer the long-lived encoder daemon so slider updates do not spawn a new
+// ALSA process for every HTTP request. Keep the CLI path as a compatibility
+// fallback for older firmware or while the daemon is starting.
+function runVolumeCommand($command) {
+    if (!preg_match('/^(set|adjust) -?\d+$|^mute$/', $command)) {
+        return false;
+    }
+
+    $socket = @stream_socket_client(
+        'unix:///tmp/volume-encoder.sock',
+        $errno,
+        $errstr,
+        0.2
+    );
+    if ($socket !== false) {
+        stream_set_timeout($socket, 1);
+        $written = fwrite($socket, $command . "\n");
+        $reply = $written === false ? false : fgets($socket);
+        fclose($socket);
+        return $reply !== false && trim($reply) === 'OK';
+    }
+
+    exec('/usr/sbin/volume-encoder ' . $command . ' 2>/dev/null', $output, $return_code);
+    return $return_code === 0;
+}
+
 $action = $_POST['action'] ?? '';
 $control = getCachedControl();
 $system_status = getSystemStatus();
@@ -67,9 +93,7 @@ switch ($action) {
             exit;
         }
         
-        exec('/usr/sbin/volume-encoder adjust 5 2>/dev/null', $output, $return_code);
-        
-        if ($return_code === 0) {
+        if (runVolumeCommand('adjust 5')) {
             echo json_encode(['success' => true]);
         } else {
             http_response_code(500);
@@ -83,9 +107,7 @@ switch ($action) {
             exit;
         }
         
-        exec('/usr/sbin/volume-encoder adjust -5 2>/dev/null', $output, $return_code);
-        
-        if ($return_code === 0) {
+        if (runVolumeCommand('adjust -5')) {
             echo json_encode(['success' => true]);
         } else {
             http_response_code(500);
@@ -111,9 +133,7 @@ switch ($action) {
         
         $volume = intval($_POST['volume'] ?? 0);
         if ($volume >= 0 && $volume <= 100) {
-            exec('/usr/sbin/volume-encoder set ' . $volume . ' 2>/dev/null', $output, $return_code);
-            
-            if ($return_code === 0) {
+            if (runVolumeCommand('set ' . $volume)) {
                 echo json_encode(['success' => true]);
             } else {
                 http_response_code(500);
@@ -134,15 +154,8 @@ switch ($action) {
         // Get current state from system_status.json
         $is_muted = $system_status['muted'] ?? false;
         
-        if ($is_muted) {
-            exec('/usr/sbin/volume-encoder mute 2>/dev/null', $output, $return_code);
-            $new_state = false;
-        } else {
-            exec('/usr/sbin/volume-encoder mute 2>/dev/null', $output, $return_code);
-            $new_state = true;
-        }
-        
-        if ($return_code === 0) {
+        if (runVolumeCommand('mute')) {
+            $new_state = !$is_muted;
             echo json_encode(['success' => true, 'muted' => $new_state]);
         } else {
             http_response_code(500);

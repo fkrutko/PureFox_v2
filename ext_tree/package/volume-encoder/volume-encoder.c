@@ -13,19 +13,91 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
 #define EVENT_MAX 32
 #define SAVE_DELAY_MS 1000
 #define MIXER_CACHE_FILE "/tmp/mixer_control_cache"
+#define VOLUME_CONTROL_SOCKET "/tmp/volume-encoder.sock"
+#define CONTROL_CLIENTS_MAX 4
 
 #define DBUS_OBJECT_PATH "/org/purefox/statusmonitor"
 #define DBUS_INTERFACE_NAME "org.purefox.StatusMonitor"
 
 static volatile sig_atomic_t running = 1;
+static int control_server = -1;
+static int control_clients[CONTROL_CLIENTS_MAX] = { -1, -1, -1, -1 };
 
 static void stop(int sig) { (void)sig; running = 0; }
+
+static void close_control_client(int index)
+{
+	if (control_clients[index] >= 0) {
+		close(control_clients[index]);
+		control_clients[index] = -1;
+	}
+}
+
+static int init_control_server(void)
+{
+	struct sockaddr_un address;
+	int flags;
+
+	control_server = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (control_server < 0)
+		return -1;
+	flags = fcntl(control_server, F_GETFL, 0);
+	if (flags < 0 || fcntl(control_server, F_SETFL, flags | O_NONBLOCK) < 0)
+		goto error;
+	memset(&address, 0, sizeof(address));
+	address.sun_family = AF_UNIX;
+	strncpy(address.sun_path, VOLUME_CONTROL_SOCKET,
+			sizeof(address.sun_path) - 1);
+	unlink(VOLUME_CONTROL_SOCKET);
+	if (bind(control_server, (struct sockaddr *)&address, sizeof(address)) < 0 ||
+	    chmod(VOLUME_CONTROL_SOCKET, 0666) < 0 ||
+	    listen(control_server, CONTROL_CLIENTS_MAX) < 0)
+		goto error;
+	return 0;
+
+error:
+	close(control_server);
+	control_server = -1;
+	unlink(VOLUME_CONTROL_SOCKET);
+	return -1;
+}
+
+static void accept_control_clients(void)
+{
+	for (;;) {
+		int client = accept(control_server, NULL, NULL);
+		int flags;
+		int i;
+
+		if (client < 0) {
+			if (errno != EAGAIN && errno != EWOULDBLOCK)
+				perror("volume control accept");
+			return;
+		}
+		flags = fcntl(client, F_GETFL, 0);
+		if (flags < 0 || fcntl(client, F_SETFL, flags | O_NONBLOCK) < 0) {
+			close(client);
+			continue;
+		}
+		for (i = 0; i < CONTROL_CLIENTS_MAX; i++) {
+			if (control_clients[i] < 0) {
+				control_clients[i] = client;
+				break;
+			}
+		}
+		if (i == CONTROL_CLIENTS_MAX)
+			close(client);
+	}
+}
 
 static int find_usb_audio_card(void)
 {
@@ -286,7 +358,7 @@ static void notify_status(int volume)
 	static DBusConnection *connection;
 	DBusMessage *message;
 	DBusError error;
-	char value[8];
+	char value[16];
 	const char *source;
 
 	if (volume >= 0) {
@@ -317,7 +389,7 @@ static void notify_status(int volume)
 	dbus_message_unref(message);
 }
 
-static void toggle_mute(void)
+static int toggle_mute(void)
 {
 	snd_mixer_t *mixer;
 	snd_mixer_elem_t *elem;
@@ -325,16 +397,71 @@ static void toggle_mute(void)
 	int enabled;
 
 	if (open_pcm_mixer(&mixer, &elem) < 0)
-		return;
+		return -1;
 	if (playback_channel(elem, &channel) < 0) {
 		snd_mixer_close(mixer);
+		return -1;
+	}
+	if (!snd_mixer_selem_has_playback_switch(elem) ||
+	    snd_mixer_selem_get_playback_switch(elem, channel, &enabled) < 0 ||
+	    snd_mixer_selem_set_playback_switch_all(elem, !enabled) < 0) {
+		snd_mixer_close(mixer);
+		return -1;
+	}
+	snd_mixer_close(mixer);
+	return 0;
+}
+
+static void process_control_client(int index)
+{
+	char command[64];
+	char operation[16];
+	const char *reply;
+	ssize_t length;
+	int value;
+	int result = -1;
+
+	length = recv(control_clients[index], command, sizeof(command) - 1, 0);
+	if (length < 0) {
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+			close_control_client(index);
 		return;
 	}
-	if (snd_mixer_selem_has_playback_switch(elem) &&
-	    snd_mixer_selem_get_playback_switch(elem, channel,
-					    &enabled) >= 0)
-		snd_mixer_selem_set_playback_switch_all(elem, !enabled);
-	snd_mixer_close(mixer);
+	if (length == 0) {
+		close_control_client(index);
+		return;
+	}
+	command[length] = '\0';
+
+	if (sscanf(command, "%15s %d", operation, &value) == 2) {
+		if (!strcmp(operation, "set")) {
+			if (value < 0)
+				value = 0;
+			if (value > 100)
+				value = 100;
+			result = set_volume(value);
+			if (result == 0)
+				notify_status(value);
+		} else if (!strcmp(operation, "adjust")) {
+			value += get_volume();
+			if (value < 0)
+				value = 0;
+			if (value > 100)
+				value = 100;
+			result = set_volume(value);
+			if (result == 0)
+				notify_status(value);
+		}
+	} else if (sscanf(command, "%15s", operation) == 1 &&
+		   !strcmp(operation, "mute")) {
+		result = toggle_mute();
+		if (result == 0)
+			notify_status(-1);
+	}
+
+	reply = result == 0 ? "OK\n" : "ERR\n";
+	(void)send(control_clients[index], reply, strlen(reply), MSG_NOSIGNAL);
+	close_control_client(index);
 }
 
 static void save_volume(int volume)
@@ -371,14 +498,14 @@ static int open_event(const char *name)
 int main(int argc, char **argv)
 {
 	struct pollfd fds[EVENT_MAX];
+	struct pollfd poll_fds[EVENT_MAX + CONTROL_CLIENTS_MAX + 1];
 	int count = 0, volume = get_volume(), dirty = 0;
 	long long save_at = 0;
 	DIR *dir;
 	struct dirent *entry;
 
 	if (argc == 2 && !strcmp(argv[1], "mute")) {
-		toggle_mute();
-		return 0;
+		return toggle_mute() ? 1 : 0;
 	}
 	if (argc == 3 && (!strcmp(argv[1], "set") || !strcmp(argv[1], "adjust"))) {
 		char *end;
@@ -396,33 +523,80 @@ int main(int argc, char **argv)
 	signal(SIGTERM, stop);
 	signal(SIGINT, stop);
 	dir = opendir("/dev/input");
-	if (!dir)
-		return 1;
-	while ((entry = readdir(dir)) && count < EVENT_MAX) {
-		if (strncmp(entry->d_name, "event", 5))
-			continue;
-		fds[count].fd = open_event(entry->d_name);
-		if (fds[count].fd >= 0)
-			fds[count++].events = POLLIN;
+	if (dir) {
+		while ((entry = readdir(dir)) && count < EVENT_MAX) {
+			if (strncmp(entry->d_name, "event", 5))
+				continue;
+			fds[count].fd = open_event(entry->d_name);
+			if (fds[count].fd >= 0)
+				fds[count++].events = POLLIN;
+		}
+		closedir(dir);
 	}
-	closedir(dir);
-	if (!count)
+
+	if (init_control_server() < 0)
+		fprintf(stderr, "volume control socket unavailable: %s\n", strerror(errno));
+	if (!count && control_server < 0)
 		return 0;
 
 	while (running) {
 		struct timespec now;
-		int timeout;
+		int timeout, poll_count = 0;
+		int control_server_index = -1;
+		int control_client_indexes[CONTROL_CLIENTS_MAX];
+		int ready;
+
+		for (int i = 0; i < CONTROL_CLIENTS_MAX; i++)
+			control_client_indexes[i] = -1;
+		for (int i = 0; i < count; i++)
+			poll_fds[poll_count++] = fds[i];
+		if (control_server >= 0) {
+			control_server_index = poll_count;
+			poll_fds[poll_count++] = (struct pollfd){
+				.fd = control_server, .events = POLLIN
+			};
+		}
+		for (int i = 0; i < CONTROL_CLIENTS_MAX; i++) {
+			if (control_clients[i] >= 0) {
+				control_client_indexes[i] = poll_count;
+				poll_fds[poll_count++] = (struct pollfd){
+					.fd = control_clients[i], .events = POLLIN
+				};
+			}
+		}
 
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		long long ms = now.tv_sec * 1000LL + now.tv_nsec / 1000000;
 		timeout = dirty ? (int)(save_at > ms ? save_at - ms : 0) : -1;
-		int ready = poll(fds, count, timeout);
+		ready = poll(poll_fds, poll_count, timeout);
+		if (ready < 0) {
+			if (errno == EINTR)
+				continue;
+			break;
+		}
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		ms = now.tv_sec * 1000LL + now.tv_nsec / 1000000;
 
 		if (ready > 0) {
+			if (control_server_index >= 0 &&
+			    (poll_fds[control_server_index].revents & POLLIN))
+				accept_control_clients();
+			for (int i = 0; i < CONTROL_CLIENTS_MAX; i++) {
+				int client_index = control_client_indexes[i];
+
+				if (client_index >= 0 &&
+				    (poll_fds[client_index].revents & POLLIN))
+					process_control_client(i);
+				else if (client_index >= 0 &&
+					 (poll_fds[client_index].revents &
+					  (POLLERR | POLLHUP | POLLNVAL)))
+					close_control_client(i);
+			}
 			for (int i = 0; i < count; i++) {
 				struct input_event event;
+
+				if (!(poll_fds[i].revents & POLLIN))
+					continue;
 				while (read(fds[i].fd, &event, sizeof(event)) == sizeof(event)) {
 					if (event.type == EV_REL && event.code == REL_DIAL && event.value) {
 						volume = step_volume(event.value);
@@ -443,5 +617,14 @@ int main(int argc, char **argv)
 	}
 	if (dirty)
 		save_volume(volume);
+	for (int i = 0; i < count; i++)
+		close(fds[i].fd);
+	for (int i = 0; i < CONTROL_CLIENTS_MAX; i++)
+		close_control_client(i);
+	if (control_server >= 0) {
+		close(control_server);
+		control_server = -1;
+		unlink(VOLUME_CONTROL_SOCKET);
+	}
 	return 0;
 }

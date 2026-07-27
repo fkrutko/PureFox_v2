@@ -1143,7 +1143,7 @@ $(document).ready(function () {
     let lastSentVolume = null;
     let lastVolumeRequestAt = 0;
     let volumeKeyboardAdjusting = false;
-    const VOLUME_REQUEST_INTERVAL_MS = 100;
+    const VOLUME_REQUEST_INTERVAL_MS = 200;
 
     // Обновляем громкость из уже полученных данных status_fast.php (НЕ отдельный запрос!)
     function updateVolumeFromStatus(data) {
@@ -1243,7 +1243,7 @@ $(document).ready(function () {
     }
 
     // Send only one volume request at a time. While it is in flight, retain
-    // just the latest slider value instead of queueing every keyboard repeat.
+    // just the latest slider value instead of queueing rapid input events.
     function setVolume() {
         if (volumeRequestInFlight || pendingVolume === null) {
             return;
@@ -1381,6 +1381,8 @@ $(document).ready(function () {
         volumeSlider.addEventListener('input', function() {
             let volume = this.value;
             volumeDisplay.textContent = volume;
+            // Keep the audio responsive, but coalesce fast input events into
+            // one latest-value request at a time for the single-core SBC.
             scheduleVolumeUpdate(volume, false);
         });
 
