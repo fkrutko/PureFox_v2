@@ -39,7 +39,7 @@
     </div>
         <button class="btn-custom success" data-service="spotify" data-process="spotify">Spotify Connect</button>
         <button class="btn-custom success" data-service="qobuz" data-process="qobuz">Qobuz Connect</button>
-	<button class="btn-custom success" data-service="celmusper" data-process="celmusper">CelMusper</button>
+<!--	<button class="btn-custom success" data-service="celmusper" data-process="celmusper">CelMusper</button> -->
 	<?php if (file_exists('/opt/tidal.sqfs')): ?>
                     <button class="btn-custom success" data-service="tidalconnect" data-process="tidalconnect">Tidal Connect</button>
                     <?php endif; ?>
