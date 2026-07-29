@@ -1430,6 +1430,89 @@ $(document).ready(function () {
         // Начальное состояние загрузится через polling
     }
 
+    const VOLUME_KEY_STEP = 1;
+
+    function isTextEntryTarget(target) {
+        if (!target || target.nodeType !== 1) {
+            return false;
+        }
+        if (target.isContentEditable) {
+            return true;
+        }
+        const tagName = target.tagName.toLowerCase();
+        if (tagName === 'textarea' || tagName === 'select') {
+            return true;
+        }
+        if (tagName !== 'input') {
+            return false;
+        }
+        const type = (target.type || '').toLowerCase();
+        return !['range', 'button', 'checkbox', 'radio', 'submit', 'reset'].includes(type);
+    }
+
+    function getVolumeKeyDirection(event) {
+        if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+            return 0;
+        }
+
+        const key = event.key || '';
+        const code = event.code || '';
+        if (['ArrowUp', 'ArrowRight', 'AudioVolumeUp', 'VolumeUp', 'MediaVolumeUp'].includes(key) ||
+            ['ArrowUp', 'ArrowRight', 'AudioVolumeUp', 'VolumeUp', 'MediaVolumeUp'].includes(code) ||
+            event.keyCode === 175 || event.keyCode === 24) {
+            return 1;
+        }
+        if (['ArrowDown', 'ArrowLeft', 'AudioVolumeDown', 'VolumeDown', 'MediaVolumeDown'].includes(key) ||
+            ['ArrowDown', 'ArrowLeft', 'AudioVolumeDown', 'VolumeDown', 'MediaVolumeDown'].includes(code) ||
+            event.keyCode === 174 || event.keyCode === 25) {
+            return -1;
+        }
+        return 0;
+    }
+
+    function adjustVolumeFromKey(direction) {
+        if (!volumeSlider || volumeSlider.disabled) {
+            return;
+        }
+
+        const currentVolume = Number(volumeSlider.value);
+        if (!Number.isFinite(currentVolume)) {
+            return;
+        }
+        const minimum = Number(volumeSlider.min) || 0;
+        const maximum = Number(volumeSlider.max) || 100;
+        const nextVolume = Math.max(minimum, Math.min(maximum,
+            currentVolume + direction * VOLUME_KEY_STEP));
+        if (nextVolume === currentVolume) {
+            return;
+        }
+
+        volumeSlider.value = String(nextVolume);
+        if (volumeDisplay) {
+            volumeDisplay.textContent = String(nextVolume);
+        }
+        scheduleVolumeUpdate(String(nextVolume), false);
+    }
+
+    // Use the page-wide arrow keys without requiring focus on the slider.
+    // Some mobile browsers expose phone volume buttons as AudioVolumeUp/Down;
+    // handle those events when they are delivered to the page as well.
+    document.addEventListener('keydown', function(event) {
+        if (document.visibilityState === 'hidden' || event.target === volumeSlider ||
+            isTextEntryTarget(event.target)) {
+            return;
+        }
+
+        const direction = getVolumeKeyDirection(event);
+        if (!direction) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        adjustVolumeFromKey(direction);
+    }, true);
+
     // Volume icon click listener
     if (volumeIcon) {
         volumeIcon.addEventListener('click', function(e) {
