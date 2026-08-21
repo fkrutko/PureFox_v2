@@ -21,7 +21,7 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 
 - Поддержка PCM 2ch до 768kHz или PCM 8ch до 192kHz
 
-- Поддержка native DSD (64-512)
+- Поддержка native DSD (64-1024; DSD1024 требует MCLK 1024x)
 
 ## Характеристики
 

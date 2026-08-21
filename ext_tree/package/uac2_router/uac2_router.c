@@ -2,7 +2,10 @@
  * UAC2 → I2S Router for PureFox / PureCore
  *
  * Routes audio from USB Audio Class 2 gadget to I2S DAC on RV1106 (LuckFox Pico MAX).
- * Supports PCM up to 768 kHz and native DSD64–DSD512.
+ * Supports PCM up to 768 kHz and native DSD up to DSD1024.
+ *
+ * DSD1024 needs the 1024x MCLK multiplier (MCLK=1024 in /etc/i2s.conf):
+ * BCLK = 45.1584 MHz (44.1k) / 49.152 MHz (48k) = MCLK, so div_bclk = 1.
  *
  * Architecture: single-thread, blocking capture ↔ accumulate ↔ blocking playback.
  * USB capture paces the loop; I2S playback follows at matched rate.
@@ -50,10 +53,12 @@
 #define DSD128_RATE      5644800
 #define DSD256_RATE     11289600
 #define DSD512_RATE     22579200
+#define DSD1024_RATE    45158400
 #define DSD64_RATE_48    3072000
 #define DSD128_RATE_48   6144000
 #define DSD256_RATE_48  12288000
 #define DSD512_RATE_48  24576000
+#define DSD1024_RATE_48 49152000
 
 /* Byte-swap macro for DSD 32-bit words.
  * USB RAW_DATA sends DSD bytes oldest-first: [B0(oldest) B1 B2 B3(newest)]
@@ -71,6 +76,9 @@ static char uac_card_path[256] = "";
 static char uac_card_name[64]  = "";
 static int  is_current_dsd = 0;
 static snd_pcm_uframes_t playback_period = 1024;
+/* Pre-buffer depth in playback periods. Doubled for DSD1024 so the wall-clock
+ * headroom before DMA starts stays the same as at DSD512. */
+static int prebuf_periods = 16;
 
 static void sighandler(int sig) { running = 0; }
 
@@ -79,6 +87,7 @@ static void sighandler(int sig) { running = 0; }
 static int is_dsd_rate(unsigned int rate) {
     return (rate == DSD64_RATE    || rate == DSD128_RATE    ||
             rate == DSD256_RATE   || rate == DSD512_RATE    ||
+            rate == DSD1024_RATE  || rate == DSD1024_RATE_48 ||
             rate == DSD64_RATE_48 || rate == DSD128_RATE_48 ||
             rate == DSD256_RATE_48|| rate == DSD512_RATE_48);
 }
@@ -89,10 +98,12 @@ static const char *get_dsd_name(unsigned int rate) {
         case DSD128_RATE:    return "DSD128/44.1";
         case DSD256_RATE:    return "DSD256/44.1";
         case DSD512_RATE:    return "DSD512/44.1";
+        case DSD1024_RATE:   return "DSD1024/44.1";
         case DSD64_RATE_48:  return "DSD64/48";
         case DSD128_RATE_48: return "DSD128/48";
         case DSD256_RATE_48: return "DSD256/48";
         case DSD512_RATE_48: return "DSD512/48";
+        case DSD1024_RATE_48: return "DSD1024/48";
         default: return "Unknown";
     }
 }
@@ -161,6 +172,11 @@ static int setup_pcm(snd_pcm_t **pcm, const char *device, snd_pcm_stream_t strea
     if (is_dsd) {
         period_size = 512;
         buffer_size = (stream == SND_PCM_STREAM_CAPTURE) ? 65536 : 32768;
+        /* Keep wall-clock buffer depth constant as LRCK doubles. DSD512 runs at
+         * LRCK 705600; DSD1024 at 1411200 would otherwise halve the headroom.
+         * Playback stays within the driver's 1 MiB buffer_bytes_max (8 B/frame). */
+        if (rate > 705600)
+            buffer_size *= 2;
     } else {
         period_size = PERIOD_FRAMES;
         if (stream == SND_PCM_STREAM_CAPTURE) {
@@ -231,6 +247,7 @@ static int configure_audio(unsigned int rate, int card, char **buffer, size_t *b
     unsigned int lrck_rate = is_dsd ? rate / 32 : rate;
 
     is_current_dsd = is_dsd;
+    prebuf_periods = (is_dsd && lrck_rate > 705600) ? 32 : 16;
 
     if (is_dsd)
         printf("\n[CONFIG] DSD MODE: %s (%u Hz, LRCK %u)\n", get_dsd_name(rate), rate, lrck_rate);
@@ -396,9 +413,8 @@ int main(void) {
     snd_pcm_uframes_t accum_pos = 0;
 
     /* Pre-buffer for burst-writing to I2S before DMA starts.
-     * 16 playback periods = half of 32768 buffer = ~23 ms at DSD512. */
-    #define PREBUF_PERIODS 16
-    size_t prebuf_max = pb_period * PREBUF_PERIODS;
+     * 16 playback periods = ~11 ms at DSD512, 32 periods = ~11 ms at DSD1024. */
+    size_t prebuf_max = pb_period * prebuf_periods;
     char *prebuf = malloc(prebuf_max * frame_bytes);
 
     int play_started = 0;
@@ -430,7 +446,7 @@ int main(void) {
                         free(accum_buf);
                         accum_buf = malloc(pb_period * frame_bytes);
                         accum_pos = 0;
-                        prebuf_max = pb_period * PREBUF_PERIODS;
+                        prebuf_max = pb_period * prebuf_periods;
                         free(prebuf);
                         prebuf = malloc(prebuf_max * frame_bytes);
                         /* Reset counters, enter pre-buffer phase */
@@ -453,7 +469,7 @@ int main(void) {
                     free(accum_buf);
                     accum_buf = malloc(pb_period * frame_bytes);
                     accum_pos = 0;
-                    prebuf_max = pb_period * PREBUF_PERIODS;
+                    prebuf_max = pb_period * prebuf_periods;
                     free(prebuf);
                     prebuf = malloc(prebuf_max * frame_bytes);
                     play_started = 0;
@@ -468,7 +484,7 @@ int main(void) {
 
         /* ── Pre-buffer phase: accumulate real data before first write ─ */
         if (need_prebuffer) {
-            snd_pcm_uframes_t target = pb_period * PREBUF_PERIODS;
+            snd_pcm_uframes_t target = pb_period * prebuf_periods;
             int got = prebuffer_from_capture(buffer, period_size, pb_period,
                                              prebuf, prebuf_max, target);
             if (got < 0) {
