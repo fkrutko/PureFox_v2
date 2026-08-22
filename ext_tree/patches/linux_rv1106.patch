@@ -1,7 +1,7 @@
 diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-rockchip-rk-6.1-rkr6.1_modify/arch/arm/boot/dts/Makefile
---- linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile	2025-07-03 12:59:45.000000000 +0200
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/arch/arm/boot/dts/Makefile	2025-11-22 20:03:36.598796410 +0100
-@@ -1122,152 +1122,7 @@
+--- linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile	2026-08-21 16:51:34.351088719 +0300
++++ linux-rockchip-rk-6.1-rkr6.1_modify/arch/arm/boot/dts/Makefile	2026-08-21 16:51:34.357161485 +0300
+@@ -1122,159 +1122,7 @@
  	r9a06g032-rzn1d400-db.dtb \
  	sh73a0-kzm9g.dtb
  dtb-$(CONFIG_ARCH_ROCKCHIP) += \
@@ -13,6 +13,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-roc
 -	rv1103g-evb-v11.dtb \
 -	rv1103g-evb-v11-sii902x-bt6562hdmi.dtb \
 -	rv1103g-evb2-v10.dtb \
+-	rv1103g-luckfox-pico-mini.dtb \
 -	rv1103g-rmsl311-dloc-sl-v10.dtb \
 -	rv1103g-scaner-v10.dtb \
 -	rv1106g-38x38-ipc-v10.dtb \
@@ -47,6 +48,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-roc
 -	rv1106g-evb2-v12-nofastae-spi-nor.dtb \
 -	rv1106g-evb2-v12-spi-nand-tb.dtb \
 -	rv1106g-evb2-v12-wakeup.dtb \
+-	rv1106g-luckfox-pico-pro-max.dtb \
 -	rv1106g-smart-door-lock-rmsl-v10.dtb \
 -	rv1106g-smart-door-lock-rmsl-v12.dtb \
 -	rv1106g-uvc-demo-v10.dtb \
@@ -128,8 +130,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-roc
 -	rk3308hs-voice-module-board-v10-aarch32.dtb \
 -	rk3502g-evb1-v10.dtb \
 -	rk3503g-evb1-v10.dtb \
+-	rk3506b-armsom-forge1.dtb \
 -	rk3506b-evb1-v10.dtb \
 -	rk3506b-test2-v10.dtb \
+-	rk3506b-luckfox-lyra-ultra-w.dtb \
+-	rk3506b-luckfox-lyra-zero-w-sd.dtb \
 -	rk3506g-demo-display-control.dtb \
 -	rk3506g-evb1-v10.dtb \
 -	rk3506g-evb1-v10-amp.dtb \
@@ -141,9 +146,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-roc
 -	rk3506g-evb1-v10-sii9022-bt1120-to-hdmi.dtb \
 -	rk3506g-evb1-v10-sii9022-rgb2hdmi.dtb \
 -	rk3506g-evb2-v10.dtb \
+-	rk3506g-luckfox-lyra-plus-sd.dtb \
 -	rk3506g-iotest-v10.dtb \
 -	rk3506g-iotest-v10-pdm.dtb \
 -	rk3506g-test1-v10-audio.dtb \
+-	rk3506j-forlinx-OK3506-S12_nand-microsd.dtb \
 -	rk3518-evb1-ddr4-v10.dtb \
 -	rk3528-demo4-ddr4-v10.dtb \
 -	rk3528-evb1-ddr4-v10.dtb \
