@@ -5633,7 +5633,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        if (!i2s_tdm->user_mute_priority && i2s_tdm->postmute_delay_ms > 0) {
 +            schedule_delayed_work(&i2s_tdm->mute_post_work, 
 +                                msecs_to_jiffies(i2s_tdm->postmute_delay_ms));
-+            dev_info(i2s_tdm->dev, "TRIGGER START: Stream started, unmute in %dms\n", 
++            dev_dbg(i2s_tdm->dev, "TRIGGER START: Stream started, unmute in %dms\n", 
 +                     i2s_tdm->postmute_delay_ms);
 +        }
 +    } else {
@@ -5672,7 +5672,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            }
 +            i2s_tdm->auto_mute_active = true;
 +            rockchip_i2s_tdm_apply_mute(i2s_tdm, true);
-+            dev_info(i2s_tdm->dev, "TRIGGER STOP: Mute enabled (no signal)\n");
++            dev_dbg(i2s_tdm->dev, "TRIGGER STOP: Mute enabled (no signal)\n");
 +        }
 +        mutex_unlock(&i2s_tdm->mute_lock);
 +    } else {
@@ -6187,14 +6187,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    
 +    /* Do NOT unmute if format change mute is active */
 +    if (i2s_tdm->format_change_mute) {
-+        dev_info(i2s_tdm->dev, "POST-MUTE: Skipping unmute - format change in progress\n");
++        dev_dbg(i2s_tdm->dev, "POST-MUTE: Skipping unmute - format change in progress\n");
 +        mutex_unlock(&i2s_tdm->mute_lock);
 +        return;
 +    }
 +    
 +    /* Unmute if auto_mute is active and no user mute priority */
 +    /* This work is only scheduled from TRIGGER_START, so stream is running */
-+    dev_info(i2s_tdm->dev, "POST-MUTE: auto_mute=%d user_priority=%d\n", 
++    dev_dbg(i2s_tdm->dev, "POST-MUTE: auto_mute=%d user_priority=%d\n", 
 +             i2s_tdm->auto_mute_active, i2s_tdm->user_mute_priority);
 +    
 +    if (i2s_tdm->auto_mute_active && !i2s_tdm->user_mute_priority) {
@@ -6205,7 +6205,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            if (i2s_tdm->mute_inv_gpio)
 +                gpiod_set_value(i2s_tdm->mute_inv_gpio, 1);
 +        }
-+        dev_info(i2s_tdm->dev, "POST-MUTE: Unmuted after %dms\n", i2s_tdm->postmute_delay_ms);
++        dev_dbg(i2s_tdm->dev, "POST-MUTE: Unmuted after %dms\n", i2s_tdm->postmute_delay_ms);
 +        
 +        /* Notify ALSA control about mute state change */
 +        if (i2s_tdm->mute_kcontrol && i2s_tdm->dai && i2s_tdm->dai->component) {
@@ -6214,7 +6214,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +                          &i2s_tdm->mute_kcontrol->id);
 +        }
 +    } else {
-+        dev_info(i2s_tdm->dev, "POST-MUTE: Unmute BLOCKED\n");
++        dev_dbg(i2s_tdm->dev, "POST-MUTE: Unmute BLOCKED\n");
 +    }
 +    
 +    mutex_unlock(&i2s_tdm->mute_lock);
@@ -6931,7 +6931,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +     * rebuild queued PCM from the shadow ring, so this capacity no longer
 +     * delays the audible gain change.
 +     */
-+    .buffer_bytes_max = 1024 * 1024,
++    .buffer_bytes_max = 2 * 1024 * 1024,
 +    .period_bytes_min = 8192,         
 +    .period_bytes_max = 64 * 1024,    /* 64KB maximum for deep buffering */
 +    .periods_min = 16,                
@@ -6944,7 +6944,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +static const struct snd_dmaengine_pcm_config rockchip_i2s_tdm_dmaengine_pcm_config = {
 +    .pcm_hardware = &rockchip_i2s_tdm_pcm_hardware,
 +    .prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config,
-+    .prealloc_buffer_size = 1024 * 1024,  /* 1MB preallocation for ultimate stability */
++    .prealloc_buffer_size = 2 * 1024 * 1024,  /* 2MB preallocation: 185 ms at DSD1024 (11.29 MB/s) */
 +};
  
 -static int rockchip_i2s_tdm_wr_wait_time_put(struct snd_kcontrol *kcontrol,
