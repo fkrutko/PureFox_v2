@@ -283,8 +283,8 @@ BR2_TOOLCHAIN_HAS_ATOMIC=y
 #
 # Commands
 #
-BR2_CURL="curl -q --ftp-pasv --retry 3"
-BR2_WGET="wget -nd -t 3"
+BR2_CURL="curl -q --ftp-pasv --retry 3 -A Mozilla/5.0"
+BR2_WGET="wget -nd -t 3 -U Mozilla/5.0"
 BR2_SVN="svn --non-interactive"
 BR2_BZR="bzr"
 BR2_GIT="git"
@@ -429,7 +429,7 @@ BR2_ROOTFS_USERS_TABLES=""
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_ext_tree_PATH)/board/luckfox/rootfs_overlay"
 BR2_ROOTFS_PRE_BUILD_SCRIPT=""
 BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_ext_tree_PATH)/board/luckfox/scripts/post-build.sh"
-BR2_ROOTFS_POST_FAKEROOT_SCRIPT=""
+BR2_ROOTFS_POST_FAKEROOT_SCRIPT="$(BR2_EXTERNAL_ext_tree_PATH)/board/luckfox/scripts/post-fakeroot.sh"
 BR2_ROOTFS_POST_IMAGE_SCRIPT="board/luckfox-pico/common/post-image.sh"
 BR2_ROOTFS_POST_SCRIPT_ARGS=""
 BR2_ROOTFS_POST_BUILD_SCRIPT_ARGS=""
