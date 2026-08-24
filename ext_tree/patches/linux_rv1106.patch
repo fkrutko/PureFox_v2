@@ -1925,7 +1925,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
  #define DRV_NAME "rockchip-i2s-tdm"
  
-@@ -33,518 +49,628 @@
+@@ -33,518 +49,622 @@
  #define HAVE_SYNC_RESET
  #endif
  
@@ -2347,12 +2347,6 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        dev_warn_once(NULL, "Unknown DSD format %d, using sample_rate as BCLK\n", format);
 +        return sample_rate;
 +    }
-+
-+    /* DSD1024 frame rates (1411200 Hz for 44.1k, 1536000 Hz for 48k) sit above
-+     * the 1 MHz boundary used below, so classify them as frame rates first.
-+     * All lower DSD frame rates (<= 768000 Hz) fall through to convention B. */
-+    if (sample_rate == 1411200 || sample_rate == 1536000)
-+        return sample_rate * bits_per_word;
 +
 +    /* Convention A: native DSD bit rate >= 1 MHz (uac2_router path) — use as-is */
 +    if (sample_rate >= 1000000)
