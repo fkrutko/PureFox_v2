@@ -2311,14 +2311,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 + *
 + * Two rate conventions depending on caller:
 + *
-+ * A) uac2_router passes the native DSD bit rate (>= 1 MHz) directly:
-+ *      44.1k: DSD64=2822400  DSD128=5644800  DSD256=11289600 DSD512=22579200 Hz
-+ *      48k:   DSD64=3072000  DSD128=6144000  DSD256=12288000 DSD512=24576000 Hz
++ * A) Caller passes the native DSD bit rate (>= 2822400 Hz) directly:
++ *      44.1k: DSD64=2822400 ... DSD512=22579200 DSD1024=45158400 Hz
++ *      48k:   DSD64=3072000 ... DSD512=24576000 DSD1024=49152000 Hz
 + *    -> BCLK = sample_rate (already correct)
 + *
-+ * B) Roon / ALSA native DSD path passes PCM frame rate (< 1 MHz):
-+ *      DSD_U32_LE 44.1k: 88200 * 32 = 2822400 Hz
-+ *      DSD_U32_LE 48k:   96000 * 32 = 3072000 Hz
++ * B) uac2_router / Roon / ALSA pass the LRCK frame rate (< 2822400 Hz):
++ *      DSD_U32_LE 44.1k: 88200..1411200 * 32 = 2822400..45158400 Hz
++ *      DSD_U32_LE 48k:   96000..1536000 * 32 = 3072000..49152000 Hz
 + *    -> BCLK = sample_rate * bits_per_word
 + */
 +static unsigned int calculate_dsd_bclk(snd_pcm_format_t format, unsigned int sample_rate)
@@ -2348,12 +2348,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        return sample_rate;
 +    }
 +
-+    /* Convention A: native DSD bit rate >= 1 MHz (uac2_router path) — use as-is */
-+    if (sample_rate >= 1000000)
++    /* Convention A: native DSD bit rate >= DSD64 (2822400 Hz), above max LRCK 1536000 */
++    if (sample_rate >= 2822400)
 +        return sample_rate;
  
 -	return dmaengine_trcm_dma_guard_ctrl(i2s_tdm->pcm_comp, stream, en);
-+    /* Convention B: PCM frame rate < 1 MHz (Roon / ALSA native DSD) */
++    /* Convention B: LRCK frame rate < 2822400 Hz */
 +    return sample_rate * bits_per_word;
  }
  
@@ -5446,12 +5446,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        }
 +
 +        /* Reject rates that require BCLK > MCLK (div_bclk < 1).
-+         * PCM 705.6/768kHz and DSD1024 both need the 1024x MCLK multiplier.
++         * Ultra-high PCM rates (705.6kHz, 768kHz) need 1024x MCLK multiplier.
 +         * With 512x MCLK:  768kHz needs BCLK=49.152MHz > MCLK=24.576MHz → impossible.
-+         * DSD1024/44.1 needs BCLK=45.1584MHz, reachable only at MCLK=45.1584MHz → div_bclk=1. */
-+        if (bclk_rate > mclk_rate) {
++         * With 1024x MCLK: 768kHz needs BCLK=49.152MHz = MCLK=49.152MHz → div_bclk=1. */
++        if (!is_dsd(params_format(params)) && bclk_rate > mclk_rate) {
 +            dev_err(i2s_tdm->dev,
-+                "Rate %u Hz requires BCLK=%u Hz > MCLK=%u Hz — switch to 1024x MCLK multiplier\n",
++                "PCM %u Hz requires BCLK=%u Hz > MCLK=%u Hz — switch to 1024x MCLK multiplier\n",
 +                params_rate(params), bclk_rate, mclk_rate);
 +            ret = -EINVAL;
 +            goto err;
