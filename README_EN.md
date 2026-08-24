@@ -19,7 +19,7 @@ PureFox is a firmware for **Luckfox Pico Max** and **Ultra** boards based on Roc
 #### Supported Audio Standards
 
 - PCM 2ch up to 768 kHz or PCM 8ch up to 192 kHz
-- Native DSD (64–1024; DSD1024 requires the 1024x MCLK multiplier)
+- Native DSD (64–512 over USB; up to DSD1024 in I2S mode with the 1024x MCLK multiplier)
 
 ## Specifications
 

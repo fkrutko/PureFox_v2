@@ -812,10 +812,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/f_uac2.c
  DECLARE_UAC2_CNTRL_RANGES_LAY3(srates, UAC_MAX_RATES);
  
 -static int get_max_srate(const int *srates)
-+/* Return highest USB packet rate (<= 1411200 Hz) for endpoint bandwidth calc.
++/* Return highest PCM rate (≤ 768000 Hz) for endpoint bandwidth calculation.
 + * DSD bit rates (≥ 2822400) must NOT be used here — they appear in the Clock
 + * Source frequency list but the actual USB packet rate for DSD is the
-+ * LRCK equivalent (bit_rate/32): 1411200 Hz for DSD1024/44.1 = 1416 B/uframe. */
++ * LRCK equivalent (bit_rate/32) with only 2 channels, far below 3072 bytes. */
 +static int get_max_pcm_srate(const int *srates)
  {
  	int i, max_srate = 0;
@@ -824,7 +824,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/f_uac2.c
  		if (srates[i] == 0)
  			break;
 -		if (srates[i] > max_srate)
-+		if (srates[i] <= 1411200 && srates[i] > max_srate)
++		if (srates[i] <= 768000 && srates[i] > max_srate)
  			max_srate = srates[i];
  	}
  	return max_srate;
@@ -1395,7 +1395,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	return 0;
  }
  
-@@ -516,8 +663,28 @@
+@@ -516,8 +663,27 @@
  	struct uac_rtd_params *prm;
  	int i;
  	unsigned long flags;
@@ -1411,8 +1411,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
 +	actual_rate = srate;
 +
 +	if (audio_dev->as_out_alt == 2 &&
-+	    (srate == 88200 || srate == 176400 || srate == 352800 || srate == 705600 ||
-+	     srate == 1411200)) {
++	    (srate == 88200 || srate == 176400 || srate == 352800 || srate == 705600)) {
 +		/* Alt Setting 2 (native DSD): LRCK rate × 32 = DSD bit rate.
 +		 * c_srates lists only LRCK rates — no need to verify bit rate there. */
 +		actual_rate = srate * 32;
@@ -1425,7 +1424,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	prm = &uac->c_prm;
  	for (i = 0; i < UAC_MAX_RATES; i++) {
  		if (params->c_srates[i] == srate) {
-@@ -526,16 +693,60 @@
+@@ -526,16 +692,60 @@
  			audio_dev->usb_state[SET_SAMPLE_RATE_OUT] = true;
  			schedule_work(&audio_dev->work);
  			spin_unlock_irqrestore(&prm->lock, flags);
@@ -1465,7 +1464,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
 +	int old_rate;
 +
 +	if (srate == 88200 || srate == 176400 ||
-+	    srate == 352800 || srate == 705600 || srate == 1411200) {
++	    srate == 352800 || srate == 705600) {
 +		actual_rate = srate * 32;
 +		dev_info(&audio_dev->gadget->dev,
 +			"DSD recheck (Alt 2 active): %d Hz → %d Hz\n",
@@ -1486,7 +1485,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  int u_audio_get_capture_srate(struct g_audio *audio_dev, u32 *val)
  {
  	struct snd_uac_chip *uac = audio_dev->uac;
-@@ -557,6 +768,7 @@
+@@ -557,6 +767,7 @@
  	struct uac_rtd_params *prm;
  	int i;
  	unsigned long flags;
@@ -1494,7 +1493,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  
  	dev_dbg(&audio_dev->gadget->dev, "%s: srate %d\n", __func__, srate);
  	prm = &uac->p_prm;
-@@ -567,6 +779,16 @@
+@@ -567,6 +778,16 @@
  			audio_dev->usb_state[SET_SAMPLE_RATE_IN] = true;
  			schedule_work(&audio_dev->work);
  			spin_unlock_irqrestore(&prm->lock, flags);
@@ -1511,7 +1510,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  			return 0;
  		}
  		if (params->p_srates[i] == 0)
-@@ -654,6 +876,24 @@
+@@ -654,6 +875,23 @@
  
  	set_active(&uac->c_prm, true);
  
@@ -1522,8 +1521,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
 +		int actual_rate = prm->srate;
 +		if (audio_dev->as_out_alt == 2 &&
 +		    (prm->srate == 88200 || prm->srate == 176400 ||
-+		     prm->srate == 352800 || prm->srate == 705600 ||
-+		     prm->srate == 1411200))
++		     prm->srate == 352800 || prm->srate == 705600))
 +			actual_rate = prm->srate * 32;
 +		uac->current_rate = actual_rate;
 +	}
@@ -1536,7 +1534,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	ep_fback = audio_dev->in_ep_fback;
  	if (!ep_fback)
  		return 0;
-@@ -689,10 +929,13 @@
+@@ -689,10 +927,13 @@
  
  	/*
  	 * Configure the feedback endpoint's reported frequency.
@@ -1552,7 +1550,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	u_audio_set_fback_frequency(audio_dev->gadget->speed, ep,
  				    prm->srate, prm->pitch,
  				    req_fback->buf);
-@@ -756,10 +999,9 @@
+@@ -756,10 +997,9 @@
  	}
  
  	ep_desc = ep->desc;
@@ -1565,7 +1563,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  
  	/* pre-calculate the playback endpoint's interval */
  	if (gadget->speed == USB_SPEED_FULL)
-@@ -807,6 +1049,22 @@
+@@ -807,6 +1047,21 @@
  
  	set_active(&uac->p_prm, true);
  
@@ -1574,8 +1572,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
 +		int actual_rate = prm->srate;
 +		if (audio_dev->as_out_alt == 2 &&
 +		    (prm->srate == 88200 || prm->srate == 176400 ||
-+		     prm->srate == 352800 || prm->srate == 705600 ||
-+		     prm->srate == 1411200))
++		     prm->srate == 352800 || prm->srate == 705600))
 +			actual_rate = prm->srate * 32;
 +		uac->current_rate = actual_rate;
 +	}
@@ -1588,7 +1585,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	return 0;
  }
  EXPORT_SYMBOL_GPL(u_audio_start_playback);
-@@ -1423,6 +1681,78 @@
+@@ -1423,6 +1678,78 @@
  	schedule_delayed_work(&g_audio->ppm_work, 1 * HZ);
  }
  
@@ -1667,7 +1664,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  int g_audio_setup(struct g_audio *g_audio, const char *pcm_name,
  					const char *card_name)
  {
-@@ -1511,6 +1841,11 @@
+@@ -1511,6 +1838,11 @@
  
  	uac->card = card;
  
@@ -1679,7 +1676,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	/*
  	 * Create first PCM device
  	 * Create a substream only for non-zero channel streams
-@@ -1536,20 +1871,27 @@
+@@ -1536,20 +1868,27 @@
  			|| (c_chmask && params->c_fu.id))
  		strscpy(card->mixername, card_name, sizeof(card->driver));
  
@@ -1717,7 +1714,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	}
  
  	if (p_chmask) {
-@@ -1564,8 +1906,10 @@
+@@ -1564,8 +1903,10 @@
  		kctl->id.subdevice = 0;
  
  		err = snd_ctl_add(card, kctl);
@@ -1729,7 +1726,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	}
  
  	for (i = 0; i <= SNDRV_PCM_STREAM_LAST; i++) {
-@@ -1674,6 +2018,26 @@
+@@ -1674,6 +2015,26 @@
  	if (err < 0)
  		goto snd_fail;
  
@@ -1756,7 +1753,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	g_audio->device = device_create(audio_class, NULL, MKDEV(0, 0), NULL,
  					"%s", g_audio->uac->card->longname);
  	if (IS_ERR(g_audio->device)) {
-@@ -1718,6 +2082,12 @@
+@@ -1718,6 +2079,12 @@
  	uac = g_audio->uac;
  	g_audio->uac = NULL;
  
@@ -1769,7 +1766,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	card = uac->card;
  	if (card)
  		snd_card_free_when_closed(card);
-@@ -1745,13 +2115,6 @@
+@@ -1745,13 +2112,6 @@
  }
  module_init(u_audio_init);
  
