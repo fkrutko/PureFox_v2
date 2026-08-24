@@ -5446,12 +5446,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        }
 +
 +        /* Reject rates that require BCLK > MCLK (div_bclk < 1).
-+         * Ultra-high PCM rates (705.6kHz, 768kHz) need 1024x MCLK multiplier.
++         * PCM 705.6/768kHz and DSD1024 both need the 1024x MCLK multiplier.
 +         * With 512x MCLK:  768kHz needs BCLK=49.152MHz > MCLK=24.576MHz → impossible.
-+         * With 1024x MCLK: 768kHz needs BCLK=49.152MHz = MCLK=49.152MHz → div_bclk=1. */
-+        if (!is_dsd(params_format(params)) && bclk_rate > mclk_rate) {
++         * DSD1024/44.1 needs BCLK=45.1584MHz, reachable only at MCLK=45.1584MHz → div_bclk=1. */
++        if (bclk_rate > mclk_rate) {
 +            dev_err(i2s_tdm->dev,
-+                "PCM %u Hz requires BCLK=%u Hz > MCLK=%u Hz — switch to 1024x MCLK multiplier\n",
++                "Rate %u Hz requires BCLK=%u Hz > MCLK=%u Hz — switch to 1024x MCLK multiplier\n",
 +                params_rate(params), bclk_rate, mclk_rate);
 +            ret = -EINVAL;
 +            goto err;
