@@ -1925,7 +1925,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
  #define DRV_NAME "rockchip-i2s-tdm"
  
-@@ -33,518 +49,622 @@
+@@ -33,518 +49,628 @@
  #define HAVE_SYNC_RESET
  #endif
  
@@ -2311,14 +2311,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 + *
 + * Two rate conventions depending on caller:
 + *
-+ * A) Caller passes the native DSD bit rate (>= 2822400 Hz) directly:
-+ *      44.1k: DSD64=2822400 ... DSD512=22579200 DSD1024=45158400 Hz
-+ *      48k:   DSD64=3072000 ... DSD512=24576000 DSD1024=49152000 Hz
++ * A) uac2_router passes the native DSD bit rate (>= 1 MHz) directly:
++ *      44.1k: DSD64=2822400  DSD128=5644800  DSD256=11289600 DSD512=22579200 Hz
++ *      48k:   DSD64=3072000  DSD128=6144000  DSD256=12288000 DSD512=24576000 Hz
 + *    -> BCLK = sample_rate (already correct)
 + *
-+ * B) uac2_router / Roon / ALSA pass the LRCK frame rate (< 2822400 Hz):
-+ *      DSD_U32_LE 44.1k: 88200..1411200 * 32 = 2822400..45158400 Hz
-+ *      DSD_U32_LE 48k:   96000..1536000 * 32 = 3072000..49152000 Hz
++ * B) Roon / ALSA native DSD path passes PCM frame rate (< 1 MHz):
++ *      DSD_U32_LE 44.1k: 88200 * 32 = 2822400 Hz
++ *      DSD_U32_LE 48k:   96000 * 32 = 3072000 Hz
 + *    -> BCLK = sample_rate * bits_per_word
 + */
 +static unsigned int calculate_dsd_bclk(snd_pcm_format_t format, unsigned int sample_rate)
@@ -2348,12 +2348,18 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        return sample_rate;
 +    }
 +
-+    /* Convention A: native DSD bit rate >= DSD64 (2822400 Hz), above max LRCK 1536000 */
-+    if (sample_rate >= 2822400)
++    /* DSD1024 frame rates (1411200 Hz for 44.1k, 1536000 Hz for 48k) sit above
++     * the 1 MHz boundary used below, so classify them as frame rates first.
++     * All lower DSD frame rates (<= 768000 Hz) fall through to convention B. */
++    if (sample_rate == 1411200 || sample_rate == 1536000)
++        return sample_rate * bits_per_word;
++
++    /* Convention A: native DSD bit rate >= 1 MHz (uac2_router path) — use as-is */
++    if (sample_rate >= 1000000)
 +        return sample_rate;
  
 -	return dmaengine_trcm_dma_guard_ctrl(i2s_tdm->pcm_comp, stream, en);
-+    /* Convention B: LRCK frame rate < 2822400 Hz */
++    /* Convention B: PCM frame rate < 1 MHz (Roon / ALSA native DSD) */
 +    return sample_rate * bits_per_word;
  }
  
