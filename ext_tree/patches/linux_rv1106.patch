@@ -1826,7 +1826,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c linux
 -			    SNDRV_PCM_FMTBIT_S16_LE |
 +		.rates = SNDRV_PCM_RATE_8000_384000 | SNDRV_PCM_RATE_KNOT,
 +		.rate_min = 8000,
-+		.rate_max = 49152000,  /* PCM up to 768kHz + DSD1024 */
++		.rate_max = 45158400,  /* PCM up to 768kHz + DSD1024 (44.1k family) */
 +		.formats = (SNDRV_PCM_FMTBIT_S16_LE |
  			    SNDRV_PCM_FMTBIT_S20_3LE |
  			    SNDRV_PCM_FMTBIT_S24_LE |
@@ -1845,7 +1845,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c linux
 -			    SNDRV_PCM_FMTBIT_S16_LE |
 +		.rates = SNDRV_PCM_RATE_8000_384000 | SNDRV_PCM_RATE_KNOT,
 +		.rate_min = 8000,
-+		.rate_max = 49152000,  /* PCM up to 768kHz + DSD1024 */
++		.rate_max = 45158400,  /* PCM up to 768kHz + DSD1024 (44.1k family) */
 +		.formats = (SNDRV_PCM_FMTBIT_S16_LE |
  			    SNDRV_PCM_FMTBIT_S20_3LE |
  			    SNDRV_PCM_FMTBIT_S24_LE |
@@ -6927,7 +6927,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +       SNDRV_PCM_FMTBIT_DSD_U32_LE,
 +    .rates = SNDRV_PCM_RATE_8000_384000 | SNDRV_PCM_RATE_KNOT,
 +    .rate_min = 8000,
-+    .rate_max = 49152000,  /* DSD1024 support (45.1584/49.152 MHz) */
++    .rate_max = 45158400,  /* DSD1024 support (45.1584 MHz, 44.1k family) */
 +    .channels_min = 2,
 +    .channels_max = 16,
 +    /*
@@ -7722,7 +7722,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        .channels_max = 16,
 +        .rates = SNDRV_PCM_RATE_8000_384000 | SNDRV_PCM_RATE_KNOT,
 +        .rate_min = 8000,
-+        .rate_max = 49152000,  /* DSD1024 support */
++        .rate_max = 45158400,  /* DSD1024 support (44.1k family) */
 +        .formats = (SNDRV_PCM_FMTBIT_S8 |
 +        SNDRV_PCM_FMTBIT_S16_LE |
 +        SNDRV_PCM_FMTBIT_S20_3LE |
@@ -7738,7 +7738,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        .channels_max = 16,
 +        .rates = SNDRV_PCM_RATE_8000_384000 | SNDRV_PCM_RATE_KNOT,
 +        .rate_min = 8000,
-+        .rate_max = 49152000,  /* DSD1024 support */
++        .rate_max = 45158400,  /* DSD1024 support (44.1k family) */
 +        .formats = (SNDRV_PCM_FMTBIT_S8 |
 +        SNDRV_PCM_FMTBIT_S16_LE |
 +        SNDRV_PCM_FMTBIT_S20_3LE |
