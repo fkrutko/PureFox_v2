@@ -1,7 +1,22 @@
 #!/bin/sh
 
+# Name advertised to HQPlayer. Unique per board: hostname + last 3 octets of
+# the eth0 MAC, which S01RkLunch derives from the CPU serial.
+naa_name() {
+    ID=$(cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':' | tr 'a-z' 'A-Z')
+    [ -z "$ID" ] && ID=$(awk '/Serial/ {print $NF}' /proc/cpuinfo | tr 'a-z' 'A-Z')
+    ID=$(echo "$ID" | tail -c 7)
+    if [ -n "$ID" ]; then
+        echo "$(hostname)-$ID"
+    else
+        hostname
+    fi
+}
+
 start() {
     printf "Starting NAA: "
+    NETWORKAUDIOD_NAME=$(naa_name)
+    export NETWORKAUDIOD_NAME
     /usr/sbin/networkaudiod > /dev/null 2>&1 &
     sleep 0.5
     if [ -f /tmp/mixer_control_cache ]; then
