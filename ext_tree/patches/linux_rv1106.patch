@@ -6935,7 +6935,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +     * rebuild queued PCM from the shadow ring, so this capacity no longer
 +     * delays the audible gain change.
 +     */
-+    .buffer_bytes_max = 2 * 1024 * 1024,
++    .buffer_bytes_max = 1024 * 1024,
 +    .period_bytes_min = 8192,         
 +    .period_bytes_max = 64 * 1024,    /* 64KB maximum for deep buffering */
 +    .periods_min = 16,                
@@ -6948,7 +6948,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +static const struct snd_dmaengine_pcm_config rockchip_i2s_tdm_dmaengine_pcm_config = {
 +    .pcm_hardware = &rockchip_i2s_tdm_pcm_hardware,
 +    .prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config,
-+    .prealloc_buffer_size = 2 * 1024 * 1024,  /* 2MB preallocation: 185 ms at DSD1024 (11.29 MB/s) */
++    .prealloc_buffer_size = 1024 * 1024,  /* 1MB preallocation for ultimate stability */
 +};
  
 -static int rockchip_i2s_tdm_wr_wait_time_put(struct snd_kcontrol *kcontrol,
