@@ -2982,7 +2982,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +674,3529 @@
+@@ -554,3020 +674,3555 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -6641,6 +6641,32 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    }
 +    
 +    if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++        /* dma_area is dma_alloc_coherent memory and therefore uncached. The
++         * DSD word swap below used to run as a read-modify-write pass directly
++         * over it, costing a DDR round trip per 32-bit word (2.82 M/s at
++         * DSD1024). Stage the swap in the cached shadow buffer instead so the
++         * uncached DMA buffer is written exactly once. The shadow buffer is
++         * unused while dsd_mode_active, so it is free to borrow here. */
++        if (i2s_tdm->dsd_sample_swap && i2s_tdm->dsd_mode_active &&
++            !(i2s_tdm->mute || i2s_tdm->auto_mute_active) &&
++            (substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U32_LE ||
++             substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U32_BE) &&
++            bytes >= 4 && (bytes % 4) == 0 &&
++            i2s_tdm->volume_shadow &&
++            pos + bytes <= i2s_tdm->volume_shadow_bytes) {
++            uint32_t *staged = (uint32_t *)((uint8_t *)i2s_tdm->volume_shadow + pos);
++            unsigned long i, total_samples = bytes / 4;
++
++            if (copy_from_user(staged, buf, bytes))
++                return -EFAULT;
++
++            for (i = 0; i < total_samples; i++)
++                staged[i] = (staged[i] >> 16) | (staged[i] << 16);
++
++            memcpy(dma_area, staged, bytes);
++            goto skip_dsd_processing;
++        }
++
 +        /* PLAYBACK: copy from user and process */
 +        if (copy_from_user(dma_area, buf, bytes))
 +            return -EFAULT;
