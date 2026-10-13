@@ -52,6 +52,7 @@
 
         <!-- Low noise: settings that do not change the audio data (lownoise.php, /opt/lownoise.sh) -->
         <div class="tab-panel" id="tab-lownoise" hidden>
+            <h3 class="ln-warning" data-lang="ln_experimental">Experimental: use at your own risk.</h3>
             <p class="ln-intro" data-lang="ln_intro">These settings do not change the audio data. Compare them by ear, one at a time.</p>
 
             <!-- Linux kernel: 6.1 | 5.10 | 5.10 with the PureFox 1.6 driver (shown when the image has more than 6.1) -->

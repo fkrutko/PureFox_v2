@@ -547,6 +547,13 @@ h1 {
 }
 
 /* Low noise tab */
+.ln-warning {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: bold;
+  color: #ff4444;
+}
+
 .ln-intro {
   margin: 4px 0 6px;
   font-size: 14px;
