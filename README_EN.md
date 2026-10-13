@@ -108,7 +108,7 @@ Via web interface: **I2S ↔ USB** toggle
 - MPD (UPnP)
 - APlayer (web radio only)
 - APrender (UPnP)
-- APScream (Diretta alternative)
+- Scream (Windows network sound card)
 - Spotify Connect (librespot)
 - Qobuz Connect
 - Tidal Connect (test version only!)

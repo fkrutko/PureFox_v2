@@ -3,10 +3,10 @@ header('Content-Type: text/plain');
 
 $player = $_GET['player'] ?? '';
 
-$allowed = ['aplayer', 'aprenderer', 'apscream', 'all', 'list'];
+$allowed = ['aplayer', 'aprenderer', 'all', 'list'];
 if (!in_array($player, $allowed, true)) {
     http_response_code(400);
-    echo "Invalid player. Use: aplayer, aprenderer, apscream, all, list\n";
+    echo "Invalid player. Use: aplayer, aprenderer, all, list\n";
     exit;
 }
 

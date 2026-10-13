@@ -1,0 +1,60 @@
+#!/bin/sh
+
+CONF=/etc/scream_receiver.conf
+LOGFILE=/var/log/scream.log
+
+MODE=multicast
+GROUP=239.255.77.77
+PORT=4010
+INTERFACE=eth0
+LATENCY=100
+DEVICE=
+[ -f "$CONF" ] && . "$CONF"
+
+start() {
+    printf "Starting Scream: "
+
+    # Follow the output selected in /etc/asound.conf. plughw only converts
+    # the sample container (e.g. 24-bit packed to S32) when the DAC needs it.
+    if [ -z "$DEVICE" ]; then
+        CARD_NUM=$(grep -E "card [0-9]" /etc/asound.conf 2>/dev/null | head -1 | awk '{print $2}')
+        if [ -n "$CARD_NUM" ] && [ -d "/proc/asound/card$CARD_NUM" ]; then
+            DEVICE="plughw:$CARD_NUM,0"
+        else
+            DEVICE=default
+        fi
+    fi
+
+    OPTIONS="-o alsa -d $DEVICE -t $LATENCY -p $PORT"
+    [ -n "$INTERFACE" ] && OPTIONS="$OPTIONS -i $INTERFACE"
+    if [ "$MODE" = "unicast" ]; then
+        OPTIONS="$OPTIONS -u"
+    else
+        OPTIONS="$OPTIONS -g $GROUP"
+    fi
+
+    /usr/bin/scream $OPTIONS </dev/null >"$LOGFILE" 2>&1 &
+    sleep 0.5
+    pidof scream >/dev/null && echo "OK" || echo "FAIL"
+    if [ -f /tmp/mixer_control_cache ]; then
+        MIXER=$(cat /tmp/mixer_control_cache | cut -d, -f1 | tr -d "'")
+        [ -n "$MIXER" ] && amixer set "$MIXER" unmute 2>/dev/null
+    fi
+}
+stop() {
+    killall -9 scream 2>/dev/null
+}
+restart() {
+	stop
+	start
+}
+case "$1" in
+  start|stop|restart)
+	"$1"
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?

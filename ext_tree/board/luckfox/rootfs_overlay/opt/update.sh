@@ -42,7 +42,7 @@ KEEP_IF_PRESENT="
 /etc/resolv.conf
 /data/ethaddr.txt
 /var/www/radio.json
-/usr/apscream/config.txt
+/etc/scream_receiver.conf
 /opt/tidal.sqfs
 "
 # Created on the device only, never shipped in the image.

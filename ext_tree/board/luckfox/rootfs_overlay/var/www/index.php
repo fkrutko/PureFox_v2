@@ -30,9 +30,9 @@
                     <img src="assets/img/settings.svg" class="settings-icon" alt="Settings">
                 </a>
             </button>
-	<button class="btn-custom primary" data-service="apscream" data-process="apscream">
-    		APScream (ASIO)
-    		<a href="apscream_settings.php" class="settings-link" data-lang="settings">
+	<button class="btn-custom primary" data-service="scream" data-process="scream">
+    		Scream
+    		<a href="scream_settings.php" class="settings-link" data-lang="settings">
     		    <img src="assets/img/settings.svg" class="settings-icon" alt="Settings">
     		</a>
 	</button>

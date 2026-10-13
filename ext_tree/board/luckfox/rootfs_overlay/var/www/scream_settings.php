@@ -1,43 +1,63 @@
 <?php
-// apscream_settings.php
+// scream_settings.php
 require_once 'config.php';
 
-$configFile = '/usr/apscream/config.txt';
+$configFile = '/etc/scream_receiver.conf';
+
+$defaults = [
+    'MODE'      => 'multicast',
+    'GROUP'     => '239.255.77.77',
+    'PORT'      => '4010',
+    'INTERFACE' => 'eth0',
+    'LATENCY'   => '100',
+    'DEVICE'    => '',
+];
+
+// The config is sourced by the init script as root, so every value is
+// checked against a strict pattern before it is written.
+$patterns = [
+    'MODE'      => '/^(multicast|unicast)$/',
+    'GROUP'     => '/^(22[4-9]|23[0-9])(\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}$/',
+    'PORT'      => '/^[0-9]{1,5}$/',
+    'INTERFACE' => '/^[A-Za-z0-9._-]{0,32}$/',
+    'LATENCY'   => '/^[0-9]{1,4}$/',
+    'DEVICE'    => '/^[A-Za-z0-9:,_-]{0,64}$/',
+];
+
+function readScreamConfig($configFile, $defaults) {
+    $settings = $defaults;
+    if (!file_exists($configFile)) {
+        return $settings;
+    }
+    $content = file_get_contents($configFile);
+    if ($content === false) {
+        throw new Exception('Cannot read config file');
+    }
+    foreach (explode("\n", $content) as $line) {
+        $line = trim($line);
+        if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) {
+            continue;
+        }
+        list($key, $value) = explode('=', $line, 2);
+        $key = trim($key);
+        if (array_key_exists($key, $defaults)) {
+            $settings[$key] = trim($value);
+        }
+    }
+    return $settings;
+}
 
 // Handle AJAX requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST' || (isset($_GET['action']) && $_GET['action'] === 'get')) {
     header('Content-Type: application/json');
-    
+
     // GET settings
     if (isset($_GET['action']) && $_GET['action'] === 'get') {
         try {
-            if (!file_exists($configFile)) {
-                throw new Exception('Config file not found');
-            }
-
-            $content = file_get_contents($configFile);
-            if ($content === false) {
-                throw new Exception('Cannot read config file');
-            }
-
-            $settings = [];
-            $lines = explode("\n", trim($content));
-            
-            foreach ($lines as $line) {
-                $line = trim($line);
-                if (empty($line) || strpos($line, '=') === false) {
-                    continue;
-                }
-                
-                list($key, $value) = explode('=', $line, 2);
-                $settings[trim($key)] = trim($value);
-            }
-
             echo json_encode([
                 'success' => true,
-                'settings' => $settings
+                'settings' => readScreamConfig($configFile, $defaults)
             ]);
-
         } catch (Exception $e) {
             echo json_encode([
                 'success' => false,
@@ -46,59 +66,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || (isset($_GET['action']) && $_GET['a
         }
         exit;
     }
-    
+
     // SAVE settings
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $input = file_get_contents('php://input');
             $settings = json_decode($input, true);
 
-            if (!$settings) {
+            if (!is_array($settings)) {
                 throw new Exception('Invalid JSON data');
             }
 
-            $keys = [
-                'AP_MODE',
-                'MMAP_MODE',
-                'TCP_MODE',
-                'ALSA_PERIOD_FRAMES',
-                'ALSA_BUFFER_FRAMES',
-                'ALSA_PERIOD_TIME',
-                'ALSA_BUFFER_TIME',
-                'PRELOAD_BUFFER_FRAMES',
-                'SCREAM_LATENCY'
-            ];
-
-            // Read current config to preserve MMAP_MODE
-            $currentSettings = [];
-            if (file_exists($configFile)) {
-                $content = file_get_contents($configFile);
-                $lines = explode("\n", trim($content));
-                foreach ($lines as $line) {
-                    $line = trim($line);
-                    if (empty($line) || strpos($line, '=') === false) {
-                        continue;
-                    }
-                    list($key, $value) = explode('=', $line, 2);
-                    $currentSettings[trim($key)] = trim($value);
-                }
-            }
-
-            // Build config content
+            $current = readScreamConfig($configFile, $defaults);
+            $values = [];
             $configLines = [];
-            foreach ($keys as $key) {
-                if ($key === 'MMAP_MODE') {
-                    $value = isset($currentSettings[$key]) ? $currentSettings[$key] : '0';
-                } else {
-                    $value = isset($settings[$key]) ? $settings[$key] : (isset($currentSettings[$key]) ? $currentSettings[$key] : '0');
+            foreach ($defaults as $key => $default) {
+                $value = isset($settings[$key]) ? trim((string)$settings[$key]) : $current[$key];
+                if (!preg_match($patterns[$key], $value)) {
+                    throw new Exception("Invalid value for $key");
                 }
+                $values[$key] = $value;
                 $configLines[] = "$key=$value";
             }
 
-            $configContent = implode("\n", $configLines) . "\n";
+            $port = (int)$values['PORT'];
+            if ($port < 1 || $port > 65535) {
+                throw new Exception('Invalid value for PORT');
+            }
 
-            if (file_put_contents($configFile, $configContent) === false) {
+            if (file_put_contents($configFile, implode("\n", $configLines) . "\n") === false) {
                 throw new Exception('Cannot write to config file');
+            }
+
+            // Apply right away when Scream is the active player
+            if (trim((string)shell_exec('/bin/pidof scream 2>/dev/null')) !== '') {
+                shell_exec('/usr/bin/sudo /etc/rc.pure/S95scream restart >/dev/null 2>&1');
             }
 
             echo json_encode([
@@ -124,7 +126,7 @@ header('Content-Type: text/html; charset=UTF-8');
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>APscream Settings</title>
+  <title>Scream Settings</title>
   <link rel="stylesheet" href="assets/css/style.css?v=<?php echo VERSION; ?>">
   <style>
     .container {
@@ -251,63 +253,48 @@ header('Content-Type: text/html; charset=UTF-8');
 <body>
   <div class="container">
     <div class="header">
-      <h1>APscream Settings</h1>
+      <h1>Scream Settings</h1>
     </div>
 
-    <form id="apscream-settings-form">
+    <form id="scream-settings-form">
       <div class="form-grid">
         <div class="form-group">
-          <label for="ap-mode">AP_MODE:</label>
-          <select id="ap-mode" name="AP_MODE">
-            <option value="0">0 - Disabled</option>
-            <option value="1">1 - Enabled</option>
+          <label for="mode">Mode:</label>
+          <select id="mode" name="MODE">
+            <option value="multicast">Multicast</option>
+            <option value="unicast">Unicast</option>
           </select>
-          <div class="help-text">Enable/disable APscream mode</div>
+          <div class="help-text">Must match the sender (Windows driver)</div>
         </div>
 
         <div class="form-group">
-          <label for="tcp-mode">TCP_MODE:</label>
-          <select id="tcp-mode" name="TCP_MODE">
-            <option value="0">0 - Disabled</option>
-            <option value="1">1 - Enabled</option>
-          </select>
-          <div class="help-text">TCP mode</div>
+          <label for="group">Multicast group:</label>
+          <input type="text" id="group" name="GROUP" placeholder="239.255.77.77">
+          <div class="help-text">Multicast mode only</div>
         </div>
 
         <div class="form-group">
-          <label for="alsa-period-frames">ALSA_PERIOD_FRAMES:</label>
-          <input type="number" id="alsa-period-frames" name="ALSA_PERIOD_FRAMES" min="256" max="65536" step="256">
-          <div class="help-text">Frames per period (256-65536)</div>
+          <label for="port">Port:</label>
+          <input type="number" id="port" name="PORT" min="1" max="65535">
+          <div class="help-text">UDP port (default 4010)</div>
         </div>
 
         <div class="form-group">
-          <label for="alsa-buffer-frames">ALSA_BUFFER_FRAMES:</label>
-          <input type="number" id="alsa-buffer-frames" name="ALSA_BUFFER_FRAMES" min="1024" max="131072" step="1024">
-          <div class="help-text">Buffer size in frames (1024-131072)</div>
+          <label for="interface">Interface:</label>
+          <input type="text" id="interface" name="INTERFACE" placeholder="eth0">
+          <div class="help-text">Network interface or IP, empty = any</div>
         </div>
 
         <div class="form-group">
-          <label for="alsa-period-time">ALSA_PERIOD_TIME:</label>
-          <input type="number" id="alsa-period-time" name="ALSA_PERIOD_TIME" min="-1" max="100000">
-          <div class="help-text">Period time μs (-1 = auto)</div>
+          <label for="latency">Latency:</label>
+          <input type="number" id="latency" name="LATENCY" min="10" max="2000" step="10">
+          <div class="help-text">Target ALSA latency in ms (10-2000)</div>
         </div>
 
         <div class="form-group">
-          <label for="alsa-buffer-time">ALSA_BUFFER_TIME:</label>
-          <input type="number" id="alsa-buffer-time" name="ALSA_BUFFER_TIME" min="-1" max="100000">
-          <div class="help-text">Buffer time μs (-1 = auto)</div>
-        </div>
-
-        <div class="form-group">
-          <label for="preload-buffer-frames">PRELOAD_BUFFER_FRAMES:</label>
-          <input type="number" id="preload-buffer-frames" name="PRELOAD_BUFFER_FRAMES" min="1000" max="500000" step="1000">
-          <div class="help-text">Preload frames (1000-500000)</div>
-        </div>
-
-        <div class="form-group">
-          <label for="scream-latency">SCREAM_LATENCY:</label>
-          <input type="number" id="scream-latency" name="SCREAM_LATENCY" min="50" max="1000" step="10">
-          <div class="help-text">Latency in ms (50-1000)</div>
+          <label for="device">ALSA device:</label>
+          <input type="text" id="device" name="DEVICE" placeholder="auto">
+          <div class="help-text">Empty = selected output (plughw)</div>
         </div>
 
         <div class="buttons">
@@ -326,7 +313,7 @@ header('Content-Type: text/html; charset=UTF-8');
     document.addEventListener('DOMContentLoaded', function() {
       loadSettings();
 
-      document.getElementById('apscream-settings-form').addEventListener('submit', function(e) {
+      document.getElementById('scream-settings-form').addEventListener('submit', function(e) {
         e.preventDefault();
         saveSettings();
       });
@@ -339,14 +326,13 @@ header('Content-Type: text/html; charset=UTF-8');
           try {
             const data = JSON.parse(text);
             if (data.success) {
-              document.getElementById('ap-mode').value = data.settings.AP_MODE || '0';
-              document.getElementById('tcp-mode').value = data.settings.TCP_MODE || '0';
-              document.getElementById('alsa-period-frames').value = data.settings.ALSA_PERIOD_FRAMES || '1024';
-              document.getElementById('alsa-buffer-frames').value = data.settings.ALSA_BUFFER_FRAMES || '32768';
-              document.getElementById('alsa-period-time').value = data.settings.ALSA_PERIOD_TIME || '-1';
-              document.getElementById('alsa-buffer-time').value = data.settings.ALSA_BUFFER_TIME || '-1';
-              document.getElementById('preload-buffer-frames').value = data.settings.PRELOAD_BUFFER_FRAMES || '50000';
-              document.getElementById('scream-latency').value = data.settings.SCREAM_LATENCY || '200';
+              const st = data.settings;
+              document.getElementById('mode').value = st.MODE || 'multicast';
+              document.getElementById('group').value = st.GROUP || '';
+              document.getElementById('port').value = st.PORT || '4010';
+              document.getElementById('interface').value = st.INTERFACE || '';
+              document.getElementById('latency').value = st.LATENCY || '100';
+              document.getElementById('device').value = st.DEVICE || '';
             } else {
               showMessage('Error loading settings: ' + data.message, 'error');
             }
@@ -361,13 +347,13 @@ header('Content-Type: text/html; charset=UTF-8');
     }
 
     function saveSettings() {
-      const formData = new FormData(document.getElementById('apscream-settings-form'));
+      const formData = new FormData(document.getElementById('scream-settings-form'));
       const settings = {};
       formData.forEach((value, key) => {
         settings[key] = value;
       });
 
-      fetch('apscream_settings.php', {
+      fetch('scream_settings.php', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

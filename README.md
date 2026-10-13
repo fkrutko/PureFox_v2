@@ -111,7 +111,7 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 - MPD (UPmP)
 - APlayer (только веб радио)
 - APrender (UPnP)
-- APScream (альтернатива Diretta)
+- Scream (сетевая звуковая карта для Windows)
 - Spotify Connect (librespot)
 - Qobuz Connect
 - Tidal Connect (только в тестовой версии!)

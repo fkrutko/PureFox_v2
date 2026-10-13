@@ -1,13 +1,12 @@
 #!/bin/sh
 #
-# update_ap.sh — обновление AP-продуктов (APlayer/APrender/APScream)
+# update_ap.sh — обновление AP-продуктов (APlayer/APrender)
 # напрямую с сайта автора albumplayer.ru
 #
 # Использование:
 #   /opt/update_ap.sh aplayer      — обновить APlayer
 #   /opt/update_ap.sh aprenderer   — обновить APrender
-#   /opt/update_ap.sh apscream     — обновить APScream
-#   /opt/update_ap.sh all          — обновить все три
+#   /opt/update_ap.sh all          — обновить оба
 #   /opt/update_ap.sh list         — показать версии
 
 set -e
@@ -58,8 +57,6 @@ fi
 
 APLAYER_URL="https://albumplayer.ru/linux/aplayer-arm32.tar.gz"
 APRENDERER_URL="https://albumplayer.ru/linux/aprenderer-arm32.tar.gz"
-APSCREAM_URL="https://albumplayer.ru/asioscream4.zip"
-APSCREAM_INNER="asioscream4/LinuxReceiver/Arm32/apscream-arm32.tar.gz"
 
 # ── утилиты ────────────────────────────────────────────────────────
 
@@ -222,59 +219,6 @@ update_aprenderer() {
     log "${GRN}${BLD}APrender updated successfully${RST}"
 }
 
-# ── обновление APScream ────────────────────────────────────────────
-
-update_apscream() {
-    log "${CYN}${BLD}=== Updating APScream ===${RST}"
-    local WAS_RUNNING=false
-    is_running apscream && WAS_RUNNING=true
-
-    if $WAS_RUNNING; then
-        log "${DIM}Stopping APScream..."
-        /etc/rc.pure/S95apscream stop 2>/dev/null || true
-        killall -9 apscream 2>/dev/null || true
-        sleep 1
-    fi
-
-    mkdir -p "$TMPDIR"
-    # бэкап config.txt
-    if [ -f /usr/apscream/config.txt ]; then
-        cp -a /usr/apscream/config.txt "$TMPDIR/apscream_config.txt.bak"
-        log "Backed up config.txt"
-    fi
-
-    download "$APSCREAM_URL" "$TMPDIR/apscream.zip"
-
-    log "${YLW}Extracting inner archive from zip..."
-    unzip -o -j "$TMPDIR/apscream.zip" "$APSCREAM_INNER" -d "$TMPDIR/" \
-        || fail "Failed to extract $APSCREAM_INNER from zip"
-
-    log "${YLW}Extracting apscream..."
-    mkdir -p /usr/apscream "$TMPDIR/apscream_extract"
-    extract_tgz "$TMPDIR/apscream-arm32.tar.gz" "$TMPDIR/apscream_extract/"
-
-    # копируем только новые файлы, сохраняя config.txt
-    if [ -f "$TMPDIR/apscream_config.txt.bak" ]; then
-        cp -a "$TMPDIR/apscream_extract/"* /usr/apscream/ 2>/dev/null || true
-        cp -a "$TMPDIR/apscream_config.txt.bak" /usr/apscream/config.txt
-        log "Restored config.txt"
-    else
-        cp -a "$TMPDIR/apscream_extract/"* /usr/apscream/ 2>/dev/null || true
-    fi
-
-    chmod +x /usr/apscream/apscream 2>/dev/null || true
-    sync
-
-    if $WAS_RUNNING; then
-        log "${BLU}Restarting APScream..."
-        /etc/rc.pure/S95apscream start 2>/dev/null || true
-        sleep 1
-        is_running apscream && ok "APScream started" || warn "APScream did not start"
-    fi
-
-    log "${GRN}${BLD}APScream updated successfully${RST}"
-}
-
 # ── список версий ──────────────────────────────────────────────────
 
 list_versions() {
@@ -282,14 +226,13 @@ list_versions() {
     printf "  ${BLD}%-14s %8s %8s %s${RST}\n" "Name" "Version" "Size" "Status"
     printf "  -------------- -------- -------- -------------\n"
 
-    for d in /usr/aplayer /usr/aprenderer /usr/apscream; do
+    for d in /usr/aplayer /usr/aprenderer; do
         if [ -d "$d" ]; then
             name=$(basename "$d")
             bin=""
             case "$name" in
                 aplayer)    bin="$d/aplayer"; proc="aplayer" ;;
                 aprenderer) bin="$d/ap2renderer"; proc="ap2renderer" ;;
-                apscream)   bin="$d/apscream"; proc="apscream" ;;
             esac
             if [ -x "$bin" ]; then
                 ver=$(grep -aoE "(Album Player|APlayer).*(for Linux|Receiver) [0-9.]+" "$bin" 2>/dev/null | head -1 | grep -oE '[0-9.]+$')
@@ -315,12 +258,11 @@ list_versions() {
 # ── главная логика ─────────────────────────────────────────────────
 
 usage() {
-    echo "Usage: $0 {aplayer|aprenderer|apscream|all|list}"
+    echo "Usage: $0 {aplayer|aprenderer|all|list}"
     echo ""
     echo "  aplayer     — обновить APlayer с albumplayer.ru"
     echo "  aprenderer  — обновить APrender с albumplayer.ru"
-    echo "  apscream    — обновить APScream с albumplayer.ru"
-    echo "  all         — обновить все три продукта"
+    echo "  all         — обновить оба продукта"
     echo "  list        — показать установленные версии"
     exit 1
 }
@@ -336,13 +278,9 @@ case "$1" in
     aprenderer)
         update_aprenderer
         ;;
-    apscream)
-        update_apscream
-        ;;
     all)
         update_aplayer
         update_aprenderer
-        update_apscream
         log "${GRN}${BLD}=== All AP products updated ===${RST}"
         ;;
     list)
