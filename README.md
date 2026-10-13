@@ -37,7 +37,7 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 
 ### Плееры
 
-- **Остались только NAA (HQPlayer) и Scream.** Удалены Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli, APlayer, APrender, Spotify Connect, Qobuz Connect, Tidal Connect и CelMusper вместе с библиотеками, которые нужны были только им. Образ корневой файловой системы уменьшился примерно с 39 до 20 МБ.
+- **Остались только NAA (HQPlayer) и Scream.** Удалены Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli, APlayer, APrender, Spotify Connect, Qobuz Connect, Tidal Connect вместе с библиотеками, которые нужны были только им. Образ корневой файловой системы уменьшился примерно с 39 до 20 МБ.
 - **Scream вместо APScream.** Закрытый приёмник APScream заменён открытым приёмником [Scream](https://github.com/duncanthrax/scream) 3.6 (вывод через ALSA). На Windows нужен стандартный драйвер Scream; ASIO-отправитель APScream в режиме AP или TCP не поддерживается. На странице настроек задаются режим (multicast/unicast), multicast-группа, порт, сетевой интерфейс, задержка и устройство ALSA.
 - **NAA**: обновлён `networkaudiod`; имя в HQPlayer уникально для каждой платы (имя хоста плюс последние шесть шестнадцатеричных цифр MAC-адреса).
 - **Выбранный плеер сохраняется при отключении питания**: выбор сразу записывается во флеш-память.
