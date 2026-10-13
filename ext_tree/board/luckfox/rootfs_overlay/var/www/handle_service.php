@@ -104,6 +104,8 @@ try {
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');
     executeCommand('ln -s ' . escapeshellarg($scriptPath) . ' /etc/init.d/S95player');
+    // Flush the choice to flash so it survives a power cut
+    executeCommand('sync');
 
     // Start selected player in foreground of this shell call (script itself backgrounds daemons as needed)
     $startOutput = executeCommand('/etc/init.d/S95player start');
