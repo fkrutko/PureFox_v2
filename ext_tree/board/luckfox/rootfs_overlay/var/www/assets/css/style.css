@@ -493,6 +493,27 @@ h1 {
   flex-shrink: 0;
 }
 
+.kernel-select {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.kernel-select.available {
+  display: flex;
+}
+
+.kernel-caption {
+  font-size: 16px;
+  color: #e0e0e0;
+}
+
+.btn-custom.usb2i2s:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Responsive design for tablets and large phones */
 @media (max-width: 584px) {
   .alsa-toggle {

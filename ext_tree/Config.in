@@ -6,4 +6,5 @@ menu "Custom packages"
 	source "../ext_tree/package/buffer_daemon/Config.in"
 	source "../ext_tree/package/dlna_bridge/Config.in"
 	source "../ext_tree/package/snd-screamalsa/Config.in"
+	source "../ext_tree/package/linux510/Config.in"
 endmenu

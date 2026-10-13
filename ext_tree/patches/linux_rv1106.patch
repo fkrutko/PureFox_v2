@@ -2871,7 +2871,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +670,3341 @@
+@@ -554,3020 +670,3352 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -7774,18 +7774,25 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
 -static int rockchip_i2s_tdm_get_fifo_count(struct device *dev,
 -					   struct snd_pcm_substream *substream)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 +static int rockchip_i2s_tdm_get_fifo_count(struct device *dev, struct snd_pcm_substream *substream)
++#else
++static int rockchip_i2s_tdm_get_fifo_count(struct device *dev, int stream)
++#endif
  {
 -	struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
 -	int val = 0;
 +    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
 +    int val = 0;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
++    int stream = substream->stream;
++#endif
  
 -	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 -		regmap_read(i2s_tdm->regmap, I2S_TXFIFOLR, &val);
 -	else
 -		regmap_read(i2s_tdm->regmap, I2S_RXFIFOLR, &val);
-+    if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++    if (stream == SNDRV_PCM_STREAM_PLAYBACK)
 +    regmap_read(i2s_tdm->regmap, I2S_TXFIFOLR, &val);
 +    else
 +    regmap_read(i2s_tdm->regmap, I2S_RXFIFOLR, &val);
@@ -8048,7 +8055,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    if (val >= 0 && val <= 2) {
 +        i2s_tdm->clk_trcm = val << I2S_CKR_TRCM_SHIFT;
 +        if (i2s_tdm->clk_trcm)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
 +    soc_dai->symmetric_rate = 1;
++#else
++    soc_dai->symmetric_rates = 1;
++#endif
 +    }
 +    }
 +

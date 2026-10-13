@@ -1,5 +1,13 @@
 #!/bin/sh
 
+case "$(uname -r)" in
+5.10.*)
+	# Kernel 5.10: dwc3 is built in, host mode only (no USBtoI2S gadget)
+	/usr/bin/usb-vbus on
+	exit 0
+	;;
+esac
+
 if [ -f /etc/usb_to_i2s.state ]; then
 	# USBtoI2S mode enabled - load gadget modules
 	insmod /lib/modules/dwc3_gadget.ko

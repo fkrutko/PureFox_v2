@@ -40,6 +40,18 @@
                     <img src="assets/img/settings.svg" class="settings-icon" alt="I2S Settings">
                 </a>
             </div>
+            <!-- Linux kernel toggle: 6.1 | 5.10 (shown when the image has 5.10) -->
+            <div class="kernel-select" id="kernel-select">
+                <span class="kernel-caption">Linux</span>
+                <div class="toggle-switch">
+                    <input type="checkbox" id="kernel-toggle" class="toggle-input">
+                    <label for="kernel-toggle" class="toggle-label">
+                        <span class="toggle-option left">6.1</span>
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-option right">5.10</span>
+                    </label>
+                </div>
+            </div>
         </div>
 
         <!-- Update and power management buttons -->

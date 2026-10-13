@@ -15,6 +15,7 @@ LINUX_DIR="$BUILD_DIR/linux-custom"
 
 BOOT_SIZE=4194304
 DTB_OFFSET=3932160
+KERNEL_MAX=3538944      # 0x360000: U-Boot bootcmd reads this much kernel
 ZIMAGE="$LINUX_DIR/arch/arm/boot/zImage"
 BOOT_DTB="$LINUX_DIR/arch/arm/boot/dts/rv1106_pll.dtb"
 BOOT_IMAGE_TMP="$BINARIES_DIR/.boot.img.$$"
@@ -32,8 +33,8 @@ trap 'rm -f "$BOOT_IMAGE_TMP"' EXIT HUP INT TERM
 
 zimage_size=$(wc -c < "$ZIMAGE")
 dtb_size=$(wc -c < "$BOOT_DTB")
-if [ "$zimage_size" -gt "$DTB_OFFSET" ]; then
-    echo "zImage overlaps DTB in boot.img" >&2
+if [ "$zimage_size" -gt "$KERNEL_MAX" ]; then
+    echo "zImage is $zimage_size bytes, U-Boot loads only $KERNEL_MAX" >&2
     exit 1
 fi
 if [ $((DTB_OFFSET + dtb_size)) -gt "$BOOT_SIZE" ]; then
@@ -45,10 +46,19 @@ fi
 cp "$ZIMAGE" "$BINARIES_DIR/zImage"
 cp "$BOOT_DTB" "$BINARIES_DIR/rv1106_pll.dtb"
 
-# Copy DTBs to target
-cp "$LINUX_DIR/arch/arm/boot/dts/rv1106_ext.dtb" "$TARGET_DIR/data/boot/1024_ext.dtb"
-cp "$BOOT_DTB" "$TARGET_DIR/data/boot/1024_pll.dtb"
-cp "$LINUX_DIR/arch/arm/boot/dts/rv1106_512_ext.dtb" "$TARGET_DIR/data/boot/512_ext.dtb"
+# Kernel 6.1 and its DTBs to target, next to /data/boot/5.10 (linux510
+# package): /opt/kernel.sh writes the selected kernel to the boot partition.
+KERNEL_DIR="$TARGET_DIR/data/boot/6.1"
+mkdir -p "$KERNEL_DIR"
+cp "$ZIMAGE" "$KERNEL_DIR/zImage"
+cp "$LINUX_DIR/arch/arm/boot/dts/rv1106_ext.dtb" "$KERNEL_DIR/1024_ext.dtb"
+cp "$BOOT_DTB" "$KERNEL_DIR/1024_pll.dtb"
+cp "$LINUX_DIR/arch/arm/boot/dts/rv1106_512_ext.dtb" "$KERNEL_DIR/512_ext.dtb"
+# Old paths: update.sh of firmware without the kernel switch writes these
+for dtb in 1024_ext.dtb 1024_pll.dtb 512_ext.dtb; do
+    rm -f "$TARGET_DIR/data/boot/$dtb"
+    ln -s "6.1/$dtb" "$TARGET_DIR/data/boot/$dtb"
+done
 
 # Create boot.img with zImage and DTB, then publish it atomically.
 dd if=/dev/zero of="$BOOT_IMAGE_TMP" bs=1 count=0 seek="$BOOT_SIZE"

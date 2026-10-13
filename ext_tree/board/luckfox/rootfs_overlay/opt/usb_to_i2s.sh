@@ -1,5 +1,12 @@
 #!/bin/sh
 
+case "$(uname -r)" in
+5.10.*)
+    echo "USB to I2S works only with kernel 6.1"
+    exit 1
+    ;;
+esac
+
 . /opt/audio-transition-lock.sh
 
 # USBtoI2S mode: I2S audio output + USB gadget (UAC2)

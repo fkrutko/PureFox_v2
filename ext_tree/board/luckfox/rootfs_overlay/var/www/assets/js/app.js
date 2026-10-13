@@ -106,7 +106,12 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
-            'leftjust_title': 'LeftJust'
+            'leftjust_title': 'LeftJust',
+            'confirm_kernel': 'Перезагрузить LuckFox с ядром Linux %s?<br>Ядро будет записано во флеш-память, не отключайте питание.',
+            'switching_kernel': 'Переключение ядра и перезагрузка...',
+            'kernel_error': 'Не удалось переключить ядро',
+            'kernel_usb_to_i2s': 'USB to I2S работает только с ядром 6.1. Сначала выключите USB to I2S.',
+            'usb_to_i2s_kernel': 'USB to I2S работает только с ядром Linux 6.1'
         },
         'en': {
             'alsa_output': 'ALSA Output:',
@@ -154,7 +159,12 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
-            'leftjust_title': 'LeftJust'
+            'leftjust_title': 'LeftJust',
+            'confirm_kernel': 'Reboot LuckFox with Linux kernel %s?<br>The kernel is written to flash, do not power off.',
+            'switching_kernel': 'Switching kernel and rebooting...',
+            'kernel_error': 'Kernel switch failed',
+            'kernel_usb_to_i2s': 'USB to I2S works only with kernel 6.1. Turn USB to I2S off first.',
+            'usb_to_i2s_kernel': 'USB to I2S works only with Linux kernel 6.1'
         },
         'de': {
             'alsa_output': 'ALSA Ausgang:',
@@ -202,7 +212,12 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
-            'leftjust_title': 'LeftJust'
+            'leftjust_title': 'LeftJust',
+            'confirm_kernel': 'LuckFox mit Linux-Kernel %s neu starten?<br>Der Kernel wird in den Flash geschrieben, Strom nicht trennen.',
+            'switching_kernel': 'Kernel wird gewechselt, Neustart...',
+            'kernel_error': 'Kernelwechsel fehlgeschlagen',
+            'kernel_usb_to_i2s': 'USB to I2S funktioniert nur mit Kernel 6.1. Schalten Sie USB to I2S zuerst aus.',
+            'usb_to_i2s_kernel': 'USB to I2S funktioniert nur mit Linux-Kernel 6.1'
         },
         'fr': {
             'alsa_output': 'Sortie ALSA:',
@@ -250,7 +265,12 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
-            'leftjust_title': 'LeftJust'
+            'leftjust_title': 'LeftJust',
+            'confirm_kernel': 'Redémarrer LuckFox avec le noyau Linux %s ?<br>Le noyau est écrit en mémoire flash, ne coupez pas l\'alimentation.',
+            'switching_kernel': 'Changement de noyau et redémarrage...',
+            'kernel_error': 'Échec du changement de noyau',
+            'kernel_usb_to_i2s': 'USB to I2S ne fonctionne qu\'avec le noyau 6.1. Désactivez d\'abord USB to I2S.',
+            'usb_to_i2s_kernel': 'USB to I2S ne fonctionne qu\'avec le noyau Linux 6.1'
         },
         'zh': {
             'alsa_output': 'ALSA 输出:',
@@ -298,7 +318,12 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
-            'leftjust_title': 'LeftJust'
+            'leftjust_title': 'LeftJust',
+            'confirm_kernel': '使用 Linux 内核 %s 重启 LuckFox？<br>内核将写入闪存，请勿断电。',
+            'switching_kernel': '正在切换内核并重启...',
+            'kernel_error': '切换内核失败',
+            'kernel_usb_to_i2s': 'USB to I2S 仅支持 6.1 内核。请先关闭 USB to I2S。',
+            'usb_to_i2s_kernel': 'USB to I2S 仅支持 Linux 6.1 内核'
         }
     };
 
@@ -1101,6 +1126,60 @@ $(document).ready(function () {
                 }
             });
             }
+        });
+    });
+
+    // Linux kernel 6.1 / 5.10 (kernel.php, /opt/kernel.sh)
+    function loadKernelStatus() {
+        $.ajax({
+            url: 'kernel.php',
+            method: 'GET',
+            dataType: 'json',
+            cache: false,
+            success: function(st) {
+                $('#kernel-toggle').prop('checked', st.selected === '5.10');
+                $('#kernel-select').toggleClass('available', st.available || st.selected === '5.10');
+                // the USBtoI2S gadget needs the 6.1 kernel
+                $('#usbto-i2s-btn').prop('disabled', st.running === '5.10')
+                    .attr('title', st.running === '5.10' ? translations[currentLang]['usb_to_i2s_kernel'] : null);
+            }
+        });
+    }
+    loadKernelStatus();
+
+    $('#kernel-toggle').change(function() {
+        const input = $(this);
+        const target = input.prop('checked') ? '5.10' : '6.1';
+        const restore = function() { input.prop('checked', target !== '5.10'); };
+
+        if (target === '5.10' && $('#usbto-i2s-btn').hasClass('active')) {
+            restore();
+            customAlert(translations[currentLang]['kernel_usb_to_i2s']);
+            return;
+        }
+        customConfirm(translations[currentLang]['confirm_kernel'].replace('%s', target), function(confirmed) {
+            if (!confirmed) {
+                restore();
+                return;
+            }
+            showSpinner(translations[currentLang]['switching_kernel']);
+            $.ajax({
+                url: 'kernel.php',
+                method: 'POST',
+                data: { kernel: target },
+                dataType: 'json',
+                timeout: 120000,
+                success: function() {
+                    setTimeout(checkConnectionAfterReboot, 5000);
+                },
+                error: function(xhr) {
+                    hideSpinner();
+                    restore();
+                    const detail = (xhr.responseJSON && xhr.responseJSON.message) || '';
+                    customAlert(translations[currentLang]['kernel_error'] +
+                        (detail ? '<br>' + $('<div>').text(detail).html().replace(/\n/g, '<br>') : ''));
+                }
+            });
         });
     });
 

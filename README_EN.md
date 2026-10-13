@@ -32,6 +32,7 @@ Compared with the upstream [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2)
 - **Bit-perfect output.** The I2S driver no longer has a software volume control, so PCM reaches the DAC unaltered. Mute is kept (GPIO mute, auto-mute, the "PCM Playback Switch" control). The volume slider in the web interface and the rotary volume encoder support are removed.
 - **DSD1024 over I2S** with the 1024x MCLK multiplier (45.1584 / 49.152 MHz). USB to I2S mode stays at DSD512.
 - **DSD fast path** in the I2S driver: the DSD word swap is done in a cached buffer, so the uncached DMA buffer is written only once per sample.
+- **Linux kernel choice: 6.1 or 5.10.** The "Linux 6.1 | 5.10" switch on the main page writes the selected kernel to the boot partition and reboots the board. Kernel 5.10 is the one from PureFox 1.x (Rockchip BSP 5.10.160 with the PureFox 1.6 kernel config) but runs this fork's I2S driver: bit-perfect, DSD1024, the same I2S settings. USB to I2S mode does not work with kernel 5.10 (the USB port is host only). The choice is kept by the online update. From the shell: `/opt/kernel.sh 5.10` or `/opt/kernel.sh 6.1`, then reboot.
 
 ### Players
 
@@ -55,7 +56,7 @@ Compared with the upstream [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2)
 | Parameter          | Value                     |
 | ------------------ | ------------------------- |
 | Processor          | Rockchip RV1106           |
-| Linux Kernel       | 6.1                       |
+| Linux Kernel       | 6.1 or 5.10 (selectable)  |
 | Power Consumption  | 80–120 mA                |
 | Storage            | SPI NOR Flash or eMMC     |
 | Power Supply       | 5V via USB Type-C         |
@@ -84,7 +85,8 @@ Upstream firmware (with all players): [MEGA](https://mega.nz/folder/jhJzXZKJ#Y6Y
 Once booted, the device is available at `http://purefox/` or by IP. If the home DNS does not resolve short names, use the mDNS address `http://purefox.local/`.
 The web interface supports automatic language switching (English, Russian, Chinese, German, French).  
 Unused player buttons can be hidden by swiping left.  
-The version button at the bottom installs the latest release from GitHub (online update).
+The version button at the bottom installs the latest release from GitHub (online update).  
+The "Linux 6.1 | 5.10" switch selects the kernel; the board reboots.
 
 SSH access is enabled: login `root`, password: `purefox`.
 

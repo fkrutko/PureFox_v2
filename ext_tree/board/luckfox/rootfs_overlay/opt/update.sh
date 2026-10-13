@@ -12,8 +12,10 @@
 #   2. check SHA-256
 #   3. loop-mount rootfs.squashfs and rsync it over / (each file is replaced
 #      atomically by rename; user settings are kept, see KEEP_* below)
-#   4. flash the kernel part of boot.img only if it changed, then put back
-#      the DTB of the current I2S mode (PLL / EXT 1024 / EXT 512)
+#   4. flash the selected kernel only if it changed (6.1: the kernel part of
+#      boot.img; 5.10, see /opt/kernel.sh: the new /data/boot/5.10/zImage),
+#      then put back the DTB of that kernel for the current I2S mode
+#      (PLL / EXT 1024 / EXT 512)
 #   5. reboot
 # idblock, U-Boot and the U-Boot environment are never touched online:
 # for those flash the full image with RV1106_Toolkit.
@@ -40,6 +42,7 @@ KEEP_IF_PRESENT="
 /etc/resolv.conf
 /data/ethaddr.txt
 /etc/scream_receiver.conf
+/etc/kernel
 "
 # Created on the device only, never shipped in the image.
 KEEP_PATTERNS="
@@ -160,22 +163,45 @@ umount "$NEW"
 sync
 
 # ---- kernel ----
-dd if="$BOOT_MTD" of="$WORK/cur_kernel" bs=65536 count=$((DTB_OFFSET / 65536)) 2>/dev/null
-dd if="$WORK/boot.img" of="$WORK/new_kernel" bs=65536 count=$((DTB_OFFSET / 65536)) 2>/dev/null
-if cmp -s "$WORK/cur_kernel" "$WORK/new_kernel"; then
-    log "Kernel unchanged."
-else
-    log "Writing the new kernel (boot.img)... Do not power off!"
-    size=$(wc -c < "$WORK/boot.img")
-    flash_erase "$BOOT_MTD" 0 0 >/dev/null || fail "flash_erase boot: reflash the firmware with RV1106_Toolkit"
-    mtd_debug write "$BOOT_MTD" 0 "$size" "$WORK/boot.img" >/dev/null || fail "boot write: reflash the firmware with RV1106_Toolkit"
+KERNEL=$(cat /etc/kernel 2>/dev/null)
+if [ "$KERNEL" = 5.10 ] && [ ! -f /data/boot/5.10/zImage ]; then
+    log "This release has no kernel 5.10, switching to 6.1."
+    rm -f /etc/kernel
+    KERNEL=6.1
 fi
+if [ "$KERNEL" = 5.10 ]; then
+    KDIR=/data/boot/5.10
+    size=$(wc -c < "$KDIR/zImage")
+    dd if="$BOOT_MTD" bs=65536 count=$(((size + 65535) / 65536)) 2>/dev/null | head -c "$size" > "$WORK/cur_kernel"
+    if cmp -s "$WORK/cur_kernel" "$KDIR/zImage"; then
+        log "Kernel 5.10 unchanged."
+    else
+        log "Writing the new kernel 5.10... Do not power off!"
+        erase_size=$(cat /sys/class/mtd/mtd3/erasesize)
+        flash_erase "$BOOT_MTD" 0 $((DTB_OFFSET / erase_size)) >/dev/null || fail "flash_erase boot: reflash the firmware with RV1106_Toolkit"
+        nandwrite -p -q "$BOOT_MTD" "$KDIR/zImage" || fail "kernel write: reflash the firmware with RV1106_Toolkit"
+    fi
+else
+    KDIR=/data/boot/6.1
+    dd if="$BOOT_MTD" of="$WORK/cur_kernel" bs=65536 count=$((DTB_OFFSET / 65536)) 2>/dev/null
+    dd if="$WORK/boot.img" of="$WORK/new_kernel" bs=65536 count=$((DTB_OFFSET / 65536)) 2>/dev/null
+    if cmp -s "$WORK/cur_kernel" "$WORK/new_kernel"; then
+        log "Kernel unchanged."
+    else
+        log "Writing the new kernel (boot.img)... Do not power off!"
+        size=$(wc -c < "$WORK/boot.img")
+        flash_erase "$BOOT_MTD" 0 0 >/dev/null || fail "flash_erase boot: reflash the firmware with RV1106_Toolkit"
+        mtd_debug write "$BOOT_MTD" 0 "$size" "$WORK/boot.img" >/dev/null || fail "boot write: reflash the firmware with RV1106_Toolkit"
+    fi
+fi
+# a release older than the kernel switch keeps the DTBs in /data/boot
+[ -d "$KDIR" ] || KDIR=/data/boot
 
 # ---- DTB of the current I2S mode ----
 case "$MODE:$MCLK" in
-    ext:512) DTB=/data/boot/512_ext.dtb ;;
-    ext:*)   DTB=/data/boot/1024_ext.dtb ;;
-    *)       DTB=/data/boot/1024_pll.dtb ;;
+    ext:512) DTB=$KDIR/512_ext.dtb ;;
+    ext:*)   DTB=$KDIR/1024_ext.dtb ;;
+    *)       DTB=$KDIR/1024_pll.dtb ;;
 esac
 if [ -f "$DTB" ]; then
     n=$(wc -c < "$DTB")
