@@ -57,10 +57,6 @@ $players = [
     'celmusper'  => ['process' => 'celmusper-trans', 'script' => 'S95celmusper', 'pidfile' => '/tmp/celmusper-transport.pid'],
 ];
 
-if (file_exists('/opt/tidal.sqfs')) {
-    $players['tidalconnect'] = ['process' => 'tidalconnect', 'script' => 'S95tidal'];
-}
-
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     fail("Invalid request method");
 }
@@ -91,7 +87,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'scream', 'celmusper-trans', 'tidalconnect', 'avahi-publish-service']);
+    stopProcessGroup(['networkaudiod', 'scream', 'celmusper-trans']);
 
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');

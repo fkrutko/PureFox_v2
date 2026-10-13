@@ -826,7 +826,7 @@ $(document).ready(function () {
         // Переключение сервиса
         
         // Увеличенный таймаут для сервисов с двухэтапным запуском
-        const timeoutDuration = (service === 'tidalconnect') ? 12000 : 8000;
+        const timeoutDuration = 8000;
         
 
         $.ajax({

@@ -106,7 +106,6 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 
 - NAA (HQPlayer)
 - Scream (сетевая звуковая карта для Windows)
-- Tidal Connect (только в тестовой версии!)
   
   
 

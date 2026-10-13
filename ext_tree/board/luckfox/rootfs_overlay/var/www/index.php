@@ -18,9 +18,6 @@
             </a>
         </button>
 <!--	<button class="btn-custom success" data-service="celmusper" data-process="celmusper">CelMusper</button> -->
-	<?php if (file_exists('/opt/tidal.sqfs')): ?>
-                    <button class="btn-custom success" data-service="tidalconnect" data-process="tidalconnect">Tidal Connect</button>
-                    <?php endif; ?>
 	<button class="btn-custom usb2i2s<?php echo file_exists('/etc/usb_to_i2s.state') ? ' active' : ''; ?>" id="usbto-i2s-btn">USB to I2S</button>
 <!--	<button class="btn-custom usb2i2s" id="dlna-bridge-btn">
 	    DLNA Bridge

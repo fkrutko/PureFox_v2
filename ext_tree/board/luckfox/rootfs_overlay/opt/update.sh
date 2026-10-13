@@ -42,7 +42,6 @@ KEEP_IF_PRESENT="
 /etc/resolv.conf
 /data/ethaddr.txt
 /etc/scream_receiver.conf
-/opt/tidal.sqfs
 "
 # Created on the device only, never shipped in the image.
 KEEP_PATTERNS="

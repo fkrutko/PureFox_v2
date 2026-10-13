@@ -103,7 +103,6 @@ Via web interface: **I2S ↔ USB** toggle
 
 - NAA (HQPlayer)
 - Scream (Windows network sound card)
-- Tidal Connect (test version only!)
 
 ## Repository Branches
 

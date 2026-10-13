@@ -28,8 +28,6 @@ if (file_exists($status_file)) {
                         $decoded['boot_id'] = $boot_id;
                     }
 
-                    // TidalConnect check moved to status_monitor.c for better performance
-
                     // Add marker that data is from C-monitor
                     $decoded['source'] = 'c_monitor';
                     echo json_encode($decoded);
@@ -45,7 +43,6 @@ $services = [
     'naa'         => 'networkaudiod',
     'scream'      => 'scream',
     'celmusper'   => 'celmusper-trans',
-    'tidalconnect'=> 'tidalconnect',
 ];
 
 $status = [

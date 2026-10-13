@@ -198,7 +198,6 @@ void get_active_service(char* service, pid_t *pid) {
         {"networkaudiod", "naa"},
         {"scream", "scream"},
         {"celmusper-transport", "celmusper"},
-        {"tidalconnect", "tidalconnect"},
         {NULL, NULL}
     };
     

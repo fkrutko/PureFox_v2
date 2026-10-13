@@ -12,7 +12,6 @@ TARGET_DIR=$1
 : "${BINARIES_DIR:?Buildroot must provide BINARIES_DIR}"
 : "${HOST_DIR:?Buildroot must provide HOST_DIR}"
 LINUX_DIR="$BUILD_DIR/linux-custom"
-MKSQUASHFS="$HOST_DIR/bin/mksquashfs"
 
 BOOT_SIZE=4194304
 DTB_OFFSET=3932160
@@ -115,19 +114,6 @@ rm -f $TARGET_DIR/lib/libgomp.so
 #    find $TARGET_DIR/usr/sbin -type f -size +500k -executable ! -name "*.so*" -exec upx --best --lzma {} \; 2>/dev/null || true
 #    find $TARGET_DIR/usr/ap* -type f -size +500k -executable ! -name "*.so*" -exec upx --best --lzma {} \; 2>/dev/null || true
 #fi
-
-# Create SquashFS for Tidal libraries (MAX only - save rootfs space)
-if [ -d "$TARGET_DIR/usr/lib/tidal" ] && [ "$(ls -A $TARGET_DIR/usr/lib/tidal/*.so* 2>/dev/null)" ]; then
-    echo "Creating SquashFS image for Tidal..."
-    [ -x "$MKSQUASHFS" ] || {
-        echo "Host mksquashfs not found: $MKSQUASHFS" >&2
-        exit 1
-    }
-    rm -f $TARGET_DIR/usr/lib/tidal.sqfs
-    "$MKSQUASHFS" "$TARGET_DIR/usr/lib/tidal" "$TARGET_DIR/usr/lib/tidal.sqfs" -comp xz -b 256K -noappend
-    echo "Removing original Tidal directory from rootfs..."
-    rm -rf $TARGET_DIR/usr/lib/tidal/*
-fi
 
 # Build id: shown in the web UI and compared by /opt/update.sh with the
 # latest GitHub release. CI sets PUREFOX_BUILD (e.g. 2.8.12); a local build
