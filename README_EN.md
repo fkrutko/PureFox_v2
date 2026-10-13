@@ -2,7 +2,7 @@
 
 **Network audio endpoint on Luckfox Pico Max / Ultra with external clock support**
 
-> This is a fork of [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2) (`MAX_6.X` branch). It keeps only the NAA and Scream players and makes the output bit-perfect. See [Changes in this fork](#changes-in-this-fork).
+> This is a fork of [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2) (`MAX_6.X` branch). It keeps only the NAA and Scream players, makes the output bit-perfect and lets you choose the Linux kernel: 6.1 or 5.10. See [Changes in this fork](#changes-in-this-fork).
 
 
 ## About
@@ -21,7 +21,7 @@ PureFox is a firmware for **Luckfox Pico Max** and **Ultra** boards based on Roc
 #### Supported Audio Standards
 
 - PCM 2ch up to 768 kHz or PCM 8ch up to 192 kHz
-- Native DSD (64–512 over USB; up to DSD1024 in I2S mode with the 1024x MCLK multiplier)
+- Native DSD (64–512 over USB; up to DSD1024 in I2S mode with the 1024x MCLK multiplier, DSD512 with the old 1.6 driver)
 
 ## Changes in this fork
 
@@ -32,14 +32,26 @@ Compared with the upstream [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2)
 - **Bit-perfect output.** The I2S driver no longer has a software volume control, so PCM reaches the DAC unaltered. Mute is kept (GPIO mute, auto-mute, the "PCM Playback Switch" control). The volume slider in the web interface and the rotary volume encoder support are removed.
 - **DSD1024 over I2S** with the 1024x MCLK multiplier (45.1584 / 49.152 MHz). USB to I2S mode stays at DSD512.
 - **DSD fast path** in the I2S driver: the DSD word swap is done in a cached buffer, so the uncached DMA buffer is written only once per sample.
-- **Kernel choice: 6.1, 5.10, or 5.10 with the old driver.** The "Kernel 6.1 | 5.10 | 5.10 (old drv)" selector on the main page writes the selected kernel to the boot partition and reboots the board.
-  - **5.10** is the PureFox 1.x kernel (Rockchip BSP 5.10.160 with the PureFox 1.6 kernel config) running this fork's I2S driver: bit-perfect, DSD1024, the same I2S settings. So 6.1 and 5.10 differ only in the kernel.
-  - **5.10 (old drv)** is the same 5.10 kernel with the I2S driver and device trees of PureFox 1.6 (including its I2S clock setup), as in firmware 1.6. DSD512 max over I2S; PCM passes unaltered at volume 100 (the web interface no longer changes it).
-  - USB to I2S mode does not work with kernel 5.10, with either driver (the USB port is host only). The choice is kept by the online update. From the shell: `/opt/kernel.sh 6.1`, `5.10` or `1.6` (5.10 with the old driver), then reboot.
+
+### Linux kernel
+
+Forum users reported that firmware 1.6 (kernel 5.10) sounds different from 2.8 (kernel 6.1). To let you compare, the firmware carries three kernel choices:
+
+| Choice | Kernel | I2S driver | DSD over I2S | USB to I2S |
+| ------ | ------ | ---------- | ------------ | ---------- |
+| **6.1** (default) | 6.1.118 | this fork's | up to DSD1024 | yes |
+| **5.10** | 5.10.160, the PureFox 1.x kernel and config | this fork's | up to DSD1024 | no |
+| **5.10 (old drv)** | 5.10.160-pf16, the same kernel | PureFox 1.6's, with its device trees and clock setup | up to DSD512 | no |
+
+- **6.1 and 5.10** run the same I2S driver (bit-perfect, the same I2S settings), so they differ only in the kernel.
+- **5.10 and 5.10 (old drv)** differ only in the I2S driver and device trees. The old driver has a software volume control; it stays at 100 and the web interface does not change it, and at 100 PCM passes unaltered.
+- **Switching.** The "Kernel 6.1 | 5.10 | 5.10 (old drv)" selector on the main page writes the selected kernel and the device tree of the current I2S mode to the boot partition, verifies them and reboots the board. Do not power off while it writes; if the write fails, retry it or reflash the board with RV1106_Toolkit. From the shell: `/opt/kernel.sh 6.1`, `/opt/kernel.sh 5.10` or `/opt/kernel.sh 1.6` (5.10 with the old driver), then `reboot`; `/opt/kernel.sh` with no argument shows the running and the selected kernel.
+- **With kernel 5.10** (either driver) the USB port is host only: output to a USB DAC works, USB to I2S mode does not.
+- The online update keeps the kernel choice.
 
 ### Players
 
-- **Only NAA (HQPlayer) and Scream remain.** Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli, APlayer, APrender, Spotify Connect, Qobuz Connect, Tidal Connect and CelMusper are removed, together with the libraries only they used. The root filesystem image shrank from about 39 MB to 20 MB.
+- **Only NAA (HQPlayer) and Scream remain.** Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli, APlayer, APrender, Spotify Connect, Qobuz Connect, Tidal Connect and CelMusper are removed, together with the libraries only they used. The root filesystem image shrank from about 39 MB to 20 MB (about 30 MB with the three kernels of the [kernel choice](#linux-kernel)).
 - **Scream instead of APScream.** The closed-source APScream receiver is replaced by the open-source [Scream](https://github.com/duncanthrax/scream) 3.6 receiver (ALSA output). It needs the standard Scream driver on Windows; APScream's ASIO sender in AP or TCP mode is not supported. The settings page sets the mode (multicast/unicast), multicast group, port, network interface, latency and ALSA device.
 - **NAA**: newer `networkaudiod`; the name shown in HQPlayer is unique per board (hostname plus the last six hex digits of the MAC address).
 - **The selected player survives a power cut**: the choice is written to flash as soon as it is made.
@@ -47,11 +59,12 @@ Compared with the upstream [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2)
 ### Firmware and updates
 
 - **Releases on GitHub.** Firmware builds are published as [GitHub releases](https://github.com/fkrutko/PureFox_v2/releases) of this repository, numbered `2.8.<commit count>` (e.g. 2.8.166).
-- **Online update from GitHub.** The version button in the web interface downloads the latest release over HTTPS with certificate verification (curl), checks its SHA-256 checksums and installs it over the running system, keeping user settings (output, I2S settings, Scream settings, password, …). The kernel is flashed only when it changed. The update no longer pulls files from luckfox.puredsd.ru.
+- **Online update from GitHub.** The version button in the web interface downloads the latest release over HTTPS with certificate verification (curl), checks its SHA-256 checksums and installs it over the running system, keeping user settings (output, I2S settings, Scream settings, password, …). The selected kernel is flashed, and only when it changed; the kernel choice is kept. The update no longer pulls files from luckfox.puredsd.ru.
 
 ### Building
 
 - `./release.sh` builds the current commit locally and publishes it as the latest GitHub release (`gh` required). `./build.sh` only builds.
+- Three kernels are built: 6.1 (the main one, in `boot.img`) and two 5.10 variants (packages `linux510` and `linux510-pf16`); their zImage and device trees go to `/data/boot/<choice>/`.
 - Builds on hosts with GCC 15 (e.g. Fedora 43); Buildroot uses ccache.
 
 ## Specifications
@@ -125,7 +138,7 @@ The I2S menu settings are configured in the web interface (the "I2S Settings" pa
 - PureCore UAC2 — USB Audio Class 2 emulation
 - PCM 2ch up to 768 kHz
 - DSD support (DoP and Native via Alt-Setting 2)
-- **USB to I2S** mode — USB input → I2S output
+- **USB to I2S** mode — USB input → I2S output (kernel 6.1 only)
 - Proprietary drivers required for Native DSD and ASIO. Available for testing upon request. Custom ASIO drivers are in development.
 
 ### Output Switching
