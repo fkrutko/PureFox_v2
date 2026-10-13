@@ -33,6 +33,10 @@ start() {
         OPTIONS="$OPTIONS -g $GROUP"
     fi
 
+    # Low noise tab, Scream resampling off: an unsupported rate fails instead
+    SCREAM_RESAMPLE=$(sed -n 's/^SCREAM_RESAMPLE=//p' /etc/lownoise.conf 2>/dev/null)
+    [ "$SCREAM_RESAMPLE" = 0 ] && export SCREAM_NO_RESAMPLE=1
+
     /usr/bin/scream $OPTIONS </dev/null >"$LOGFILE" 2>&1 &
     sleep 0.5
     pidof scream >/dev/null && echo "OK" || echo "FAIL"

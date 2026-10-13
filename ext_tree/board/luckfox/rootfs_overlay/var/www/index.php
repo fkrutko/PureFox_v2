@@ -9,6 +9,13 @@
 </head>
 <body>
     <div class="container">
+        <!-- Tabs: Player | Low noise -->
+        <div class="tabs seg" role="tablist">
+            <button type="button" class="seg-option tab-btn active" role="tab" data-tab="player" data-lang="tab_player">Player</button>
+            <button type="button" class="seg-option tab-btn" role="tab" data-tab="lownoise" data-lang="tab_lownoise">Low noise</button>
+        </div>
+
+        <div class="tab-panel" id="tab-player">
         <!-- Player control buttons -->
         <button class="btn-custom warning" data-service="naa" data-process="naa_process">HQPlayer (NAA)</button>
         <button class="btn-custom primary" data-service="scream" data-process="scream">
@@ -40,13 +47,71 @@
                     <img src="assets/img/settings.svg" class="settings-icon" alt="I2S Settings">
                 </a>
             </div>
+        </div>
+        </div>
+
+        <!-- Low noise: settings that do not change the audio data (lownoise.php, /opt/lownoise.sh) -->
+        <div class="tab-panel" id="tab-lownoise" hidden>
+            <p class="ln-intro" data-lang="ln_intro">These settings do not change the audio data. Compare them by ear, one at a time.</p>
+
             <!-- Linux kernel: 6.1 | 5.10 | 5.10 with the PureFox 1.6 driver (shown when the image has more than 6.1) -->
-            <div class="kernel-select" id="kernel-select">
-                <span class="kernel-caption" data-lang="kernel_caption">Kernel</span>
-                <div class="kernel-options">
-                    <button type="button" class="kernel-option" data-kernel="6.1">6.1</button>
-                    <button type="button" class="kernel-option" data-kernel="5.10">5.10</button>
-                    <button type="button" class="kernel-option" data-kernel="1.6">5.10 (old drv)</button>
+            <div class="ln-row" id="kernel-row" hidden>
+                <div class="ln-text">
+                    <div class="ln-title" data-lang="kernel_caption">Kernel</div>
+                    <div class="ln-hint" data-lang="ln_kernel_hint">Writes the kernel to flash and reboots. Default: 6.1.</div>
+                </div>
+                <div class="seg">
+                    <button type="button" class="seg-option kernel-option" data-kernel="6.1">6.1</button>
+                    <button type="button" class="seg-option kernel-option" data-kernel="5.10">5.10</button>
+                    <button type="button" class="seg-option kernel-option" data-kernel="1.6">5.10 (old drv)</button>
+                </div>
+            </div>
+
+            <div class="ln-row" id="ln-cpu-row" hidden>
+                <div class="ln-text">
+                    <div class="ln-title" data-lang="ln_cpu">CPU frequency</div>
+                    <div class="ln-hint"><span data-lang="ln_cpu_hint">Lower clock, less supply noise. Check DSD512 and 768 kHz for dropouts. Default: 1608 MHz on 5.10, 1104 MHz on 6.1.</span> <span id="ln-cpu-now"></span></div>
+                </div>
+                <select class="ln-select" id="ln-cpu" data-key="CPU_MAX_FREQ"></select>
+            </div>
+
+            <div class="ln-row">
+                <div class="ln-text">
+                    <div class="ln-title" data-lang="ln_drive">I2S pin drive</div>
+                    <div class="ln-hint" data-lang="ln_drive_hint">Edge speed of SCLK, LRCK and the data outputs. Lower: less ringing and ground bounce; higher for long wires. Default: level 2.</div>
+                </div>
+                <select class="ln-select ln-drive" id="ln-drive" data-key="I2S_DRIVE"></select>
+            </div>
+
+            <div class="ln-row">
+                <div class="ln-text">
+                    <div class="ln-title" data-lang="ln_mclk_drive">MCLK pin drive</div>
+                    <div class="ln-hint" data-lang="ln_mclk_drive_hint">Edge speed of the MCLK output. No effect in EXT mode, where MCLK is an input. Default: level 3.</div>
+                </div>
+                <select class="ln-select ln-drive" id="ln-mclk-drive" data-key="MCLK_DRIVE"></select>
+            </div>
+
+            <div class="ln-row">
+                <div class="ln-text">
+                    <div class="ln-title" data-lang="ln_dma">DMA periods per buffer</div>
+                    <div class="ln-hint"><span data-lang="ln_dma_hint">Fewer, longer periods: fewer interrupts. Applies when playback starts. Default: 16.</span> <span id="ln-dma-reboot" data-lang="ln_dma_reboot" hidden>Reboot to enable.</span></div>
+                </div>
+                <div class="seg" id="ln-dma">
+                    <button type="button" class="seg-option ln-option" data-key="DMA_PERIODS" data-value="16">16</button>
+                    <button type="button" class="seg-option ln-option" data-key="DMA_PERIODS" data-value="8">8</button>
+                    <button type="button" class="seg-option ln-option" data-key="DMA_PERIODS" data-value="4">4</button>
+                    <button type="button" class="seg-option ln-option" data-key="DMA_PERIODS" data-value="2">2</button>
+                </div>
+            </div>
+
+            <div class="ln-row">
+                <div class="ln-text">
+                    <div class="ln-title" data-lang="ln_scream">Scream resampling</div>
+                    <div class="ln-hint" data-lang="ln_scream_hint">Off: a sample rate the output does not take fails instead of being resampled. Default: On.</div>
+                </div>
+                <div class="seg">
+                    <button type="button" class="seg-option ln-option" data-key="SCREAM_RESAMPLE" data-value="0" data-lang="ln_off">Off</button>
+                    <button type="button" class="seg-option ln-option" data-key="SCREAM_RESAMPLE" data-value="1" data-lang="ln_on">On</button>
                 </div>
             </div>
         </div>

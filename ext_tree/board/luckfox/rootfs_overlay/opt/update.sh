@@ -129,11 +129,12 @@ mount -t squashfs -o loop,ro "$WORK/rootfs.squashfs" "$NEW" || fail "cannot moun
 [ -f "$NEW/etc/purefox-release" ] && [ -f "$NEW/var/www/config.php" ] && [ -d "$NEW/data/boot" ] \
     || fail "image does not look like PureFox"
 
-# ---- stop players, save I2S settings ----
+# ---- stop players, save I2S and low noise settings ----
 log "Stopping players..."
 for s in /etc/init.d/S95*; do [ -x "$s" ] && "$s" stop >/dev/null 2>&1; done
 killall status_monitor 2>/dev/null
 cp /etc/i2s.conf "$WORK/i2s.conf" 2>/dev/null
+cp /etc/lownoise.conf "$WORK/lownoise.conf" 2>/dev/null
 
 # ---- files ----
 set --
@@ -157,6 +158,7 @@ rsync -acH --numeric-ids --delete-before \
 
 # new i2s.conf may carry new keys: take it and put back the user's values
 [ -f "$WORK/i2s.conf" ] && merge_conf "$WORK/i2s.conf" /etc/i2s.conf
+[ -f "$WORK/lownoise.conf" ] && merge_conf "$WORK/lownoise.conf" /etc/lownoise.conf
 MODE=$(sed -n 's/^MODE=//p' /etc/i2s.conf 2>/dev/null)
 MCLK=$(sed -n 's/^MCLK=//p' /etc/i2s.conf 2>/dev/null)
 

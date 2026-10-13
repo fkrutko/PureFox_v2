@@ -1,0 +1,20 @@
+From: Fedor Krutko <fkrutko@gmail.com>
+Subject: alsa: SCREAM_NO_RESAMPLE disables ALSA soft resampling
+
+With SCREAM_NO_RESAMPLE=1 a sample rate the device does not support fails
+instead of being resampled by the plug layer.
+
+--- a/Receivers/unix/alsa.c
++++ b/Receivers/unix/alsa.c
+@@ -44,7 +44,10 @@
+ int setup_alsa(snd_pcm_t **psnd, snd_pcm_format_t format, unsigned int rate, unsigned int target_latency_ms, const char *output_device, int channels, snd_pcm_chmap_t **channel_map)
+ {
+   int ret;
+-  int soft_resample = 1;
++  /* SCREAM_NO_RESAMPLE=1: fail instead of letting ALSA (plughw) resample
++   * a rate the device does not take */
++  const char *no_resample = getenv("SCREAM_NO_RESAMPLE");
++  int soft_resample = !(no_resample && no_resample[0] == '1');
+   unsigned int latency = target_latency_ms * 1000;
+ 
+   ret = snd_pcm_open(psnd, output_device, SND_PCM_STREAM_PLAYBACK, 0);

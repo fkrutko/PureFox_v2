@@ -1,0 +1,35 @@
+From: Fedor Krutko <fkrutko@gmail.com>
+Subject: ASoC: rockchip: i2s-tdm: periods_min parameter
+
+Lets the Low noise tab allow fewer, longer DMA periods (fewer interrupts).
+The default, 16, keeps the PureFox 1.6 behaviour.
+
+--- a/sound/soc/rockchip/rockchip_i2s_tdm.c
++++ b/sound/soc/rockchip/rockchip_i2s_tdm.c
+@@ -2920,6 +2920,16 @@
+     return 0;
+ }
+ 
++/*
++ * Fewest DMA periods per buffer. The PCM hardware allows no fewer than 16, so
++ * a player asking for a 100 ms buffer gets 6.25 ms periods; fewer, longer
++ * periods mean fewer DMA interrupts. Read when a stream opens. Set from the
++ * web page's Low noise tab (/opt/lownoise.sh).
++ */
++static unsigned int periods_min = 16;
++module_param(periods_min, uint, 0644);
++MODULE_PARM_DESC(periods_min, "Fewest DMA periods per buffer, 2..16 (default 16)");
++
+ static int rockchip_i2s_tdm_startup(struct snd_pcm_substream *substream,
+         struct snd_soc_dai *dai)
+ {
+@@ -2930,6 +2940,9 @@
+ 
+     i2s_tdm->substreams[substream->stream] = substream;
+ 
++    if (periods_min >= 2 && periods_min < substream->runtime->hw.periods_min)
++        substream->runtime->hw.periods_min = periods_min;
++
+     /* Export DSD rates for userspace applications like RoonReady */
+     if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+         dev_info(i2s_tdm->dev, "DSD support available: 2.8M, 5.6M, 11.2M, 22.5M Hz\n");

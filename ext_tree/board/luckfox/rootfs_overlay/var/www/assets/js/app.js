@@ -113,7 +113,28 @@ $(document).ready(function () {
             'kernel_usb_to_i2s': 'USB to I2S работает только с ядром 6.1. Сначала выключите USB to I2S.',
             'usb_to_i2s_kernel': 'USB to I2S работает только с ядром Linux 6.1',
             'kernel_caption': 'Ядро',
-            'kernel_pf16': '5.10 с драйвером I2S из PureFox 1.6'
+            'kernel_pf16': '5.10 с драйвером I2S из PureFox 1.6',
+            'tab_player': 'Плеер',
+            'tab_lownoise': 'Низкий шум',
+            'ln_intro': 'Эти настройки не меняют аудиоданные. Сравнивайте на слух, по одной.',
+            'ln_kernel_hint': 'Ядро записывается во флеш-память, затем перезагрузка. По умолчанию: 6.1.',
+            'ln_cpu': 'Частота процессора',
+            'ln_cpu_hint': 'Ниже частота — меньше помех по питанию. Проверьте DSD512 и 768 кГц на выпадения. По умолчанию: 1608 МГц на 5.10, 1104 МГц на 6.1.',
+            'ln_cpu_now': 'Сейчас %s МГц.',
+            'ln_default': 'По умолчанию',
+            'ln_level': 'Уровень %s',
+            'ln_drive': 'Сила выходов I2S',
+            'ln_drive_hint': 'Крутизна фронтов SCLK, LRCK и выходов данных. Ниже — меньше звона и помех по земле; выше — для длинных проводов. По умолчанию: уровень 2.',
+            'ln_mclk_drive': 'Сила выхода MCLK',
+            'ln_mclk_drive_hint': 'Крутизна фронтов выхода MCLK. В режиме EXT не действует: там MCLK — вход. По умолчанию: уровень 3.',
+            'ln_dma': 'Периодов DMA на буфер',
+            'ln_dma_hint': 'Меньше периодов, они длиннее — меньше прерываний. Действует со следующего запуска воспроизведения. По умолчанию: 16.',
+            'ln_dma_reboot': 'Перезагрузите плату, чтобы включить.',
+            'ln_scream': 'Ресемплинг Scream',
+            'ln_scream_hint': 'Выкл: частота, которую выход не поддерживает, не пересчитывается, а вызывает ошибку. По умолчанию: Вкл.',
+            'ln_off': 'Выкл',
+            'ln_on': 'Вкл',
+            'ln_error': 'Не удалось применить настройку'
         },
         'en': {
             'alsa_output': 'ALSA Output:',
@@ -168,7 +189,28 @@ $(document).ready(function () {
             'kernel_usb_to_i2s': 'USB to I2S works only with kernel 6.1. Turn USB to I2S off first.',
             'usb_to_i2s_kernel': 'USB to I2S works only with Linux kernel 6.1',
             'kernel_caption': 'Kernel',
-            'kernel_pf16': '5.10 with the PureFox 1.6 I2S driver'
+            'kernel_pf16': '5.10 with the PureFox 1.6 I2S driver',
+            'tab_player': 'Player',
+            'tab_lownoise': 'Low noise',
+            'ln_intro': 'These settings do not change the audio data. Compare them by ear, one at a time.',
+            'ln_kernel_hint': 'Writes the kernel to flash and reboots. Default: 6.1.',
+            'ln_cpu': 'CPU frequency',
+            'ln_cpu_hint': 'Lower clock, less supply noise. Check DSD512 and 768 kHz for dropouts. Default: 1608 MHz on 5.10, 1104 MHz on 6.1.',
+            'ln_cpu_now': 'Now %s MHz.',
+            'ln_default': 'Default',
+            'ln_level': 'Level %s',
+            'ln_drive': 'I2S pin drive',
+            'ln_drive_hint': 'Edge speed of SCLK, LRCK and the data outputs. Lower: less ringing and ground bounce; higher for long wires. Default: level 2.',
+            'ln_mclk_drive': 'MCLK pin drive',
+            'ln_mclk_drive_hint': 'Edge speed of the MCLK output. No effect in EXT mode, where MCLK is an input. Default: level 3.',
+            'ln_dma': 'DMA periods per buffer',
+            'ln_dma_hint': 'Fewer, longer periods: fewer interrupts. Applies when playback starts. Default: 16.',
+            'ln_dma_reboot': 'Reboot to enable.',
+            'ln_scream': 'Scream resampling',
+            'ln_scream_hint': 'Off: a sample rate the output does not take fails instead of being resampled. Default: On.',
+            'ln_off': 'Off',
+            'ln_on': 'On',
+            'ln_error': 'Could not apply the setting'
         },
         'de': {
             'alsa_output': 'ALSA Ausgang:',
@@ -223,7 +265,28 @@ $(document).ready(function () {
             'kernel_usb_to_i2s': 'USB to I2S funktioniert nur mit Kernel 6.1. Schalten Sie USB to I2S zuerst aus.',
             'usb_to_i2s_kernel': 'USB to I2S funktioniert nur mit Linux-Kernel 6.1',
             'kernel_caption': 'Kernel',
-            'kernel_pf16': '5.10 mit dem I2S-Treiber von PureFox 1.6'
+            'kernel_pf16': '5.10 mit dem I2S-Treiber von PureFox 1.6',
+            'tab_player': 'Player',
+            'tab_lownoise': 'Rauscharm',
+            'ln_intro': 'Diese Einstellungen ändern die Audiodaten nicht. Vergleichen Sie nach Gehör, eine nach der anderen.',
+            'ln_kernel_hint': 'Schreibt den Kernel in den Flash und startet neu. Standard: 6.1.',
+            'ln_cpu': 'CPU-Takt',
+            'ln_cpu_hint': 'Niedrigerer Takt, weniger Störungen auf der Versorgung. DSD512 und 768 kHz auf Aussetzer prüfen. Standard: 1608 MHz bei 5.10, 1104 MHz bei 6.1.',
+            'ln_cpu_now': 'Jetzt %s MHz.',
+            'ln_default': 'Standard',
+            'ln_level': 'Stufe %s',
+            'ln_drive': 'I2S-Treiberstärke',
+            'ln_drive_hint': 'Flankensteilheit von SCLK, LRCK und den Datenausgängen. Niedriger: weniger Überschwingen und Masseprellen; höher für lange Leitungen. Standard: Stufe 2.',
+            'ln_mclk_drive': 'MCLK-Treiberstärke',
+            'ln_mclk_drive_hint': 'Flankensteilheit des MCLK-Ausgangs. Im EXT-Modus ohne Wirkung, dort ist MCLK ein Eingang. Standard: Stufe 3.',
+            'ln_dma': 'DMA-Perioden pro Puffer',
+            'ln_dma_hint': 'Weniger, längere Perioden: weniger Interrupts. Gilt ab dem nächsten Wiedergabestart. Standard: 16.',
+            'ln_dma_reboot': 'Zum Aktivieren neu starten.',
+            'ln_scream': 'Scream-Resampling',
+            'ln_scream_hint': 'Aus: Eine vom Ausgang nicht unterstützte Abtastrate führt zu einem Fehler statt zu Resampling. Standard: Ein.',
+            'ln_off': 'Aus',
+            'ln_on': 'Ein',
+            'ln_error': 'Einstellung konnte nicht übernommen werden'
         },
         'fr': {
             'alsa_output': 'Sortie ALSA:',
@@ -278,7 +341,28 @@ $(document).ready(function () {
             'kernel_usb_to_i2s': 'USB to I2S ne fonctionne qu\'avec le noyau 6.1. Désactivez d\'abord USB to I2S.',
             'usb_to_i2s_kernel': 'USB to I2S ne fonctionne qu\'avec le noyau Linux 6.1',
             'kernel_caption': 'Noyau',
-            'kernel_pf16': '5.10 avec le pilote I2S de PureFox 1.6'
+            'kernel_pf16': '5.10 avec le pilote I2S de PureFox 1.6',
+            'tab_player': 'Lecteur',
+            'tab_lownoise': 'Faible bruit',
+            'ln_intro': 'Ces réglages ne modifient pas les données audio. Comparez-les à l\'oreille, un par un.',
+            'ln_kernel_hint': 'Écrit le noyau en mémoire flash et redémarre. Par défaut : 6.1.',
+            'ln_cpu': 'Fréquence du processeur',
+            'ln_cpu_hint': 'Horloge plus basse, moins de bruit sur l\'alimentation. Vérifiez DSD512 et 768 kHz (coupures). Par défaut : 1608 MHz avec 5.10, 1104 MHz avec 6.1.',
+            'ln_cpu_now': 'Actuellement %s MHz.',
+            'ln_default': 'Par défaut',
+            'ln_level': 'Niveau %s',
+            'ln_drive': 'Courant des sorties I2S',
+            'ln_drive_hint': 'Raideur des fronts de SCLK, LRCK et des sorties de données. Plus bas : moins de suroscillations et de rebond de masse ; plus haut pour des fils longs. Par défaut : niveau 2.',
+            'ln_mclk_drive': 'Courant de la sortie MCLK',
+            'ln_mclk_drive_hint': 'Raideur des fronts de la sortie MCLK. Sans effet en mode EXT, où MCLK est une entrée. Par défaut : niveau 3.',
+            'ln_dma': 'Périodes DMA par tampon',
+            'ln_dma_hint': 'Moins de périodes, plus longues : moins d\'interruptions. S\'applique au prochain démarrage de la lecture. Par défaut : 16.',
+            'ln_dma_reboot': 'Redémarrez pour l\'activer.',
+            'ln_scream': 'Rééchantillonnage Scream',
+            'ln_scream_hint': 'Off : une fréquence non prise en charge par la sortie provoque une erreur au lieu d\'être rééchantillonnée. Par défaut : On.',
+            'ln_off': 'Off',
+            'ln_on': 'On',
+            'ln_error': 'Impossible d\'appliquer le réglage'
         },
         'zh': {
             'alsa_output': 'ALSA 输出:',
@@ -333,7 +417,28 @@ $(document).ready(function () {
             'kernel_usb_to_i2s': 'USB to I2S 仅支持 6.1 内核。请先关闭 USB to I2S。',
             'usb_to_i2s_kernel': 'USB to I2S 仅支持 Linux 6.1 内核',
             'kernel_caption': '内核',
-            'kernel_pf16': '5.10，使用 PureFox 1.6 的 I2S 驱动'
+            'kernel_pf16': '5.10，使用 PureFox 1.6 的 I2S 驱动',
+            'tab_player': '播放器',
+            'tab_lownoise': '低噪声',
+            'ln_intro': '这些设置不会改变音频数据。请逐项用耳朵比较。',
+            'ln_kernel_hint': '将内核写入闪存并重启。默认：6.1。',
+            'ln_cpu': 'CPU 频率',
+            'ln_cpu_hint': '频率越低，电源噪声越小。请检查 DSD512 和 768 kHz 是否断音。默认：5.10 为 1608 MHz，6.1 为 1104 MHz。',
+            'ln_cpu_now': '当前 %s MHz。',
+            'ln_default': '默认',
+            'ln_level': '等级 %s',
+            'ln_drive': 'I2S 引脚驱动强度',
+            'ln_drive_hint': 'SCLK、LRCK 和数据输出的边沿速度。较低：振铃和地弹更少；长导线时调高。默认：等级 2。',
+            'ln_mclk_drive': 'MCLK 引脚驱动强度',
+            'ln_mclk_drive_hint': 'MCLK 输出的边沿速度。EXT 模式下无效（MCLK 为输入）。默认：等级 3。',
+            'ln_dma': '每个缓冲区的 DMA 周期数',
+            'ln_dma_hint': '周期更少、更长：中断更少。从下次开始播放时生效。默认：16。',
+            'ln_dma_reboot': '重启后启用。',
+            'ln_scream': 'Scream 重采样',
+            'ln_scream_hint': '关：输出不支持的采样率将报错，而不是被重采样。默认：开。',
+            'ln_off': '关',
+            'ln_on': '开',
+            'ln_error': '无法应用设置'
         }
     };
 
@@ -1162,7 +1267,7 @@ $(document).ready(function () {
                 });
                 $('.kernel-option[data-kernel="1.6"]').attr('title', translations[currentLang]['kernel_pf16']);
                 showKernel(st.selected);
-                $('#kernel-select').toggleClass('available', st.available.length > 1 || st.selected !== '6.1');
+                $('#kernel-row').prop('hidden', !(st.available.length > 1 || st.selected !== '6.1'));
                 // the USBtoI2S gadget needs the 6.1 kernel
                 $('#usbto-i2s-btn').prop('disabled', st.running !== '6.1')
                     .attr('title', st.running !== '6.1' ? translations[currentLang]['usb_to_i2s_kernel'] : null);
@@ -1208,6 +1313,103 @@ $(document).ready(function () {
             });
         });
     });
+
+    // Tabs: Player | Low noise; the open tab is remembered in this browser
+    function showTab(tab) {
+        $('.tab-btn').removeClass('active').filter('[data-tab="' + tab + '"]').addClass('active');
+        $('.tab-panel').prop('hidden', true);
+        $('#tab-' + tab).prop('hidden', false);
+        if (tab === 'lownoise') {
+            loadLowNoise();
+        }
+    }
+
+    $('.tab-btn').click(function() {
+        const tab = $(this).data('tab');
+        try { localStorage.setItem('purefox_tab', tab); } catch (e) { /* storage blocked */ }
+        showTab(tab);
+    });
+
+    // Low noise settings (lownoise.php, /opt/lownoise.sh)
+    function lnText(key) {
+        return translations[currentLang][key] || translations['en'][key];
+    }
+
+    function showLowNoise(st) {
+        const s = st.settings;
+
+        const cpu = $('#ln-cpu').empty();
+        $('<option>').val('0').text(lnText('ln_default')).appendTo(cpu);
+        st.cpu.frequencies.slice().sort(function(a, b) { return b - a; }).forEach(function(khz) {
+            $('<option>').val(String(khz)).text((khz / 1000) + ' MHz').appendTo(cpu);
+        });
+        cpu.val(s.CPU_MAX_FREQ);
+        $('#ln-cpu-row').prop('hidden', st.cpu.frequencies.length === 0);
+        $('#ln-cpu-now').text(st.cpu.current ? lnText('ln_cpu_now').replace('%s', st.cpu.current / 1000) : '');
+
+        $('.ln-drive').each(function() {
+            const drive = $(this).empty();
+            $('<option>').val('default').text(lnText('ln_default')).appendTo(drive);
+            for (let level = 0; level <= 7; level++) {
+                $('<option>').val(String(level)).text(lnText('ln_level').replace('%s', level)).appendTo(drive);
+            }
+            drive.val(s[drive.data('key')]);
+        });
+
+        $('.ln-option').each(function() {
+            const key = $(this).data('key');
+            $(this).toggleClass('active', String($(this).data('value')) === s[key]);
+        });
+        $('#ln-dma .ln-option').prop('disabled', !st.dma_supported);
+        $('#ln-dma-reboot').prop('hidden', st.dma_supported);
+    }
+
+    function loadLowNoise() {
+        $.ajax({
+            url: 'lownoise.php',
+            method: 'GET',
+            dataType: 'json',
+            cache: false,
+            success: showLowNoise
+        });
+    }
+
+    function setLowNoise(control, key, value) {
+        const row = control.closest('.ln-row').addClass('busy');
+        $.ajax({
+            url: 'lownoise.php',
+            method: 'POST',
+            data: { key: key, value: value },
+            dataType: 'json',
+            timeout: 30000,
+            success: showLowNoise,
+            error: function(xhr) {
+                const detail = (xhr.responseJSON && xhr.responseJSON.message) || '';
+                customAlert(lnText('ln_error') +
+                    (detail ? '<br>' + $('<div>').text(detail).html().replace(/\n/g, '<br>') : ''));
+                loadLowNoise();
+            },
+            complete: function() {
+                row.removeClass('busy');
+            }
+        });
+    }
+
+    $('.ln-option').click(function() {
+        const button = $(this);
+        if (button.hasClass('active') || button.closest('.ln-row').hasClass('busy')) {
+            return;
+        }
+        setLowNoise(button, button.data('key'), String(button.data('value')));
+    });
+
+    $('.ln-select').change(function() {
+        setLowNoise($(this), $(this).data('key'), $(this).val());
+    });
+
+    let savedTab = 'player';
+    try { savedTab = localStorage.getItem('purefox_tab') || 'player'; } catch (e) { /* storage blocked */ }
+    showTab($('#tab-' + savedTab).length ? savedTab : 'player');
 
     // Функция проверки соединения после перезагрузки
     function checkConnectionAfterReboot() {
