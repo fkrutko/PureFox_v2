@@ -261,7 +261,10 @@ APPLY_PATCHES = TAR="$(TAR)" PATH=$(HOST_DIR)/bin:$$PATH support/scripts/apply-p
 HOST_CPPFLAGS  = -I$(HOST_DIR)/include
 HOST_CFLAGS   ?= -O2
 HOST_CFLAGS   += $(HOST_CPPFLAGS)
-HOST_CXXFLAGS += $(HOST_CFLAGS)
+# Host GCC 15 defaults to C23, which older host packages (m4, dbus-glib,
+# ...) do not build with. C only: keep it out of the C++ flags.
+HOST_CFLAGS   += -std=gnu17
+HOST_CXXFLAGS += $(filter-out -std=gnu17,$(HOST_CFLAGS))
 HOST_LDFLAGS  += -L$(HOST_DIR)/lib -Wl,-rpath,$(HOST_DIR)/lib
 
 # host-intltool should be executed with the system perl, so we save
