@@ -42,7 +42,6 @@ if (file_exists($status_file)) {
 $services = [
     'naa'         => 'networkaudiod',
     'scream'      => 'scream',
-    'celmusper'   => 'celmusper-trans',
 ];
 
 $status = [

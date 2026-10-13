@@ -30,16 +30,9 @@ function stopProcessGroup($processList) {
     executeCommand("killall -9 $plist 2>/dev/null || true");
 }
 
-function waitForProcess($process, $timeoutMs = 1000, $pidFile = null) {
+function waitForProcess($process, $timeoutMs = 1000) {
     $attempts = (int)($timeoutMs / 100);
     for ($attempt = 0; $attempt < $attempts; $attempt++) {
-        if ($pidFile && is_readable($pidFile)) {
-            $pid = trim((string)file_get_contents($pidFile));
-            if ($pid !== '' && strspn($pid, '0123456789') === strlen($pid) && (int)$pid > 0 &&
-                trim((string)shell_exec('kill -0 ' . (int)$pid . ' 2>/dev/null && echo alive')) === 'alive') {
-                return true;
-            }
-        }
         $pid = trim((string)shell_exec('/bin/pidof ' . escapeshellarg($process) . ' 2>/dev/null'));
         if ($pid !== '') {
             return true;
@@ -52,9 +45,6 @@ function waitForProcess($process, $timeoutMs = 1000, $pidFile = null) {
 $players = [
     'naa'        => ['process' => 'networkaudiod',   'script' => 'S95naa'],
     'scream'     => ['process' => 'scream',          'script' => 'S95scream'],
-    // Linux limits the process comm field to 15 characters.  BusyBox pidof
-    // and killall therefore see celmusper-transport as celmusper-trans.
-    'celmusper'  => ['process' => 'celmusper-trans', 'script' => 'S95celmusper', 'pidfile' => '/tmp/celmusper-transport.pid'],
 ];
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -87,7 +77,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'scream', 'celmusper-trans']);
+    stopProcessGroup(['networkaudiod', 'scream']);
 
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');
@@ -104,7 +94,7 @@ try {
 
     // Confirm the actual process without a fixed one-second delay.
     $proc = $players[$playerToStart]['process'];
-    $confirmed = waitForProcess($proc, 1000, $players[$playerToStart]['pidfile'] ?? null);
+    $confirmed = waitForProcess($proc, 1000);
 
     echo json_encode([
         'status' => $confirmed ? 'success' : 'error',

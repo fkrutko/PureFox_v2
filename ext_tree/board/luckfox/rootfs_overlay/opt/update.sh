@@ -36,8 +36,6 @@ KEEP_IF_PRESENT="
 /etc/usb_to_i2s.state
 /etc/dlna_bridge.conf
 /etc/dlna_bridge.state
-/etc/celmusper_transport/cmt.conf
-/etc/celmusper_transport/cmt-i2s.conf
 /etc/shadow
 /etc/resolv.conf
 /data/ethaddr.txt
