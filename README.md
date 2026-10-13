@@ -105,15 +105,7 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 ## Поддерживаемые плееры
 
 - NAA (HQPlayer)
-- Roon Ready (RAAT)
-- Squeezelite (LMS)
-- shairport-sync (AirPlay)
-- MPD (UPmP)
-- APlayer (только веб радио)
-- APrender (UPnP)
 - Scream (сетевая звуковая карта для Windows)
-- Spotify Connect (librespot)
-- Qobuz Connect
 - Tidal Connect (только в тестовой версии!)
   
   

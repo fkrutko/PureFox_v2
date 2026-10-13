@@ -11,34 +11,12 @@
     <div class="container">
         <!-- Player control buttons -->
         <button class="btn-custom warning" data-service="naa" data-process="naa_process">HQPlayer (NAA)</button>
-        <button class="btn-custom warning" data-service="raat" data-process="raat_process">Roon (RAAT)</button>
-        <div class="streaming-buttons">
-            <button class="btn-custom warning" data-service="lms" data-process="squeezelite">Squeezelite (LMS)</button>
-            <button class="btn-custom warning" data-service="shairport" data-process="shairport_process">AirPlay</button>
-        </div>
-        <button class="btn-custom warning" data-service="mpd" data-process="mpd">MPD (UPnP)</button>
-           <button class="btn-custom primary" data-service="aplayer" data-process="aplayer">
-                APlayer
-                <a href="http://" class="settings-link" data-lang="settings">
-                    <img src="assets/img/radio.svg" class="settings-icon" alt="Radio">
-                </a>
-            </button>
-    <div class="player-buttons">
-	<button class="btn-custom primary" data-service="aprenderer" data-process="aprenderer">
-                APrender (UPnP)
-                <a href="http://" class="settings-link" data-lang="settings">
-                    <img src="assets/img/settings.svg" class="settings-icon" alt="Settings">
-                </a>
-            </button>
-	<button class="btn-custom primary" data-service="scream" data-process="scream">
-    		Scream
-    		<a href="scream_settings.php" class="settings-link" data-lang="settings">
-    		    <img src="assets/img/settings.svg" class="settings-icon" alt="Settings">
-    		</a>
-	</button>
-    </div>
-        <button class="btn-custom success" data-service="spotify" data-process="spotify">Spotify Connect</button>
-        <button class="btn-custom success" data-service="qobuz" data-process="qobuz">Qobuz Connect</button>
+        <button class="btn-custom primary" data-service="scream" data-process="scream">
+            Scream
+            <a href="scream_settings.php" class="settings-link" data-lang="settings">
+                <img src="assets/img/settings.svg" class="settings-icon" alt="Settings">
+            </a>
+        </button>
 <!--	<button class="btn-custom success" data-service="celmusper" data-process="celmusper">CelMusper</button> -->
 	<?php if (file_exists('/opt/tidal.sqfs')): ?>
                     <button class="btn-custom success" data-service="tidalconnect" data-process="tidalconnect">Tidal Connect</button>

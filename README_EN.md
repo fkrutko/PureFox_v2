@@ -102,15 +102,7 @@ Via web interface: **I2S ↔ USB** toggle
 ## Supported Players
 
 - NAA (HQPlayer)
-- Roon Ready (RAAT)
-- Squeezelite (LMS)
-- shairport-sync (AirPlay)
-- MPD (UPnP)
-- APlayer (web radio only)
-- APrender (UPnP)
 - Scream (Windows network sound card)
-- Spotify Connect (librespot)
-- Qobuz Connect
 - Tidal Connect (test version only!)
 
 ## Repository Branches

@@ -58,16 +58,11 @@ dd if="$BINARIES_DIR/rv1106_pll.dtb" of="$BOOT_IMAGE_TMP" bs=1 seek="$DTB_OFFSET
 mv "$BOOT_IMAGE_TMP" "$BINARIES_DIR/boot.img"
 rm "$BINARIES_DIR/zImage"
 
-rm -f $TARGET_DIR/etc/init.d/*shairport-sync
-rm -f $TARGET_DIR/etc/init.d/*upmpdcli
 rm -f $TARGET_DIR/etc/init.d/*urandom
-rm -f $TARGET_DIR/etc/init.d/*mpd
 rm -f $TARGET_DIR/etc/init.d/S40network
 #rm -f $TARGET_DIR/etc/init.d/*mdev
 rm -f -r $TARGET_DIR/etc/alsa
 #rm -f -r $(TARGET_DIR/var/db
-echo "uprclautostart = 1" > $TARGET_DIR/etc/upmpdcli.conf
-echo "friendlyname = PureOS" >> $TARGET_DIR/etc/upmpdcli.conf
 #sed -i "s/console::respawn/#console::respawn/g" $TARGET_DIR/etc/inittab
 sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/g" $TARGET_DIR/etc/ssh/sshd_config
 # php-cgi setuid-root is applied in post-fakeroot.sh (chown requires
@@ -75,7 +70,7 @@ sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/g" $TARGET_DIR/
 
 
 # Add www-data to audio group for ALSA access without sudo
-sed -i 's/^audio:x:29:upmpdcli$/audio:x:29:upmpdcli,www-data/' $TARGET_DIR/etc/group
+sed -i -E '/^audio:/{/[:,]www-data(,|$)/!{s/:$/:www-data/;t;s/$/,www-data/}}' $TARGET_DIR/etc/group
 
 # Remove GDB Python helper files (they prevent buildroot's strip from working)
 find $TARGET_DIR -name "*-gdb.py" -delete

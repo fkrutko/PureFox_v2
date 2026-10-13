@@ -56,7 +56,7 @@ case "$ACTION" in
         # USB audio device disconnected
         echo "USB audio device disconnected: $MDEV" >> /tmp/usb-hotplug.log
 
-        # Stop audio services to prevent 100% CPU usage (especially librespot)
+        # Stop audio services so they do not spin on a missing device
         # They will be restarted when USB device is reconnected
         for service in /etc/init.d/S95*; do
             [ -x "$service" ] && run_without_audio_lock_fd "$service" stop &

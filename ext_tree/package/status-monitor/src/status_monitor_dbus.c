@@ -196,16 +196,7 @@ void get_active_service(char* service, pid_t *pid) {
     
     const char* services[][2] = {
         {"networkaudiod", "naa"},
-        {"raat_app", "raat"},
-        {"mpd", "mpd"},
-        {"squeeze2upnp", "squeeze2upn"},
-        {"ap2renderer", "aprenderer"},
-        {"aplayer", "aplayer"},
         {"scream", "scream"},
-        {"squeezelite", "lms"},
-        {"shairport-sync", "shairport"},
-        {"librespot", "spotify"},
-        {"qobuz-connect", "qobuz"},
         {"celmusper-transport", "celmusper"},
         {"tidalconnect", "tidalconnect"},
         {NULL, NULL}

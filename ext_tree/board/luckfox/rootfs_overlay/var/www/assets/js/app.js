@@ -58,11 +58,6 @@ $(document).ready(function () {
     let previousActiveService = null;
 
 
-    // Dynamic URL setup based on current host (PRESERVED!)
-    var currentHost = window.location.hostname;
-    $('button[data-service="aprenderer"] .settings-link').attr('href', 'http://' + currentHost + ':7779');
-    $('button[data-service="aplayer"] .settings-link').attr('href', 'http://' + currentHost + ':7778');
-
     // Language dictionaries (FULLY PRESERVED!)
     window.translations = {
         'ru': {
@@ -831,7 +826,7 @@ $(document).ready(function () {
         // Переключение сервиса
         
         // Увеличенный таймаут для сервисов с двухэтапным запуском
-        const timeoutDuration = (service === 'qobuz') ? 15000 : (service === 'tidalconnect') ? 12000 : 8000;
+        const timeoutDuration = (service === 'tidalconnect') ? 12000 : 8000;
         
 
         $.ajax({

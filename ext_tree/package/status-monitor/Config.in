@@ -9,7 +9,7 @@ config BR2_PACKAGE_STATUS_MONITOR
       efficient web interface polling.
       
       Features:
-      - Monitors active audio services (NAA, RAAT, MPD, etc.)
+      - Monitors active audio services (NAA, Scream, etc.)
       - Tracks ALSA output configuration (I2S/USB)
       - Minimal CPU usage (C implementation)
       - JSON output for web interface

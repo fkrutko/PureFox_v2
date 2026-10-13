@@ -51,15 +51,7 @@ function waitForProcess($process, $timeoutMs = 1000, $pidFile = null) {
 
 $players = [
     'naa'        => ['process' => 'networkaudiod',   'script' => 'S95naa'],
-    'raat'       => ['process' => 'raat_app',        'script' => 'S95roonready'],
-    'mpd'        => ['process' => 'mpd',             'script' => 'S95mpd'],
-    'aprenderer' => ['process' => 'ap2renderer',     'script' => 'S95aprenderer'],
-    'aplayer'    => ['process' => 'aplayer',         'script' => 'S95aplayer'],
     'scream'     => ['process' => 'scream',          'script' => 'S95scream'],
-    'shairport'  => ['process' => 'shairport-sync',  'script' => 'S95shairport'],
-    'lms'        => ['process' => 'squeezelite',     'script' => 'S95squeezelite'],
-    'spotify'    => ['process' => 'librespot',       'script' => 'S95spotify'],
-    'qobuz'      => ['process' => 'qobuz-connect',   'script' => 'S95qobuz'],
     // Linux limits the process comm field to 15 characters.  BusyBox pidof
     // and killall therefore see celmusper-transport as celmusper-trans.
     'celmusper'  => ['process' => 'celmusper-trans', 'script' => 'S95celmusper', 'pidfile' => '/tmp/celmusper-transport.pid'],
@@ -99,7 +91,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'scream', 'shairport-sync', 'squeezelite', 'librespot', 'qobuz-connect', 'celmusper-trans', 'tidalconnect', 'avahi-publish-service']);
+    stopProcessGroup(['networkaudiod', 'scream', 'celmusper-trans', 'tidalconnect', 'avahi-publish-service']);
 
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');

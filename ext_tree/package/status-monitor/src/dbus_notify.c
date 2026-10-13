@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
     if (argc < 2) {
         printf("Usage: %s <signal_name> [message]\n", argv[0]);
         printf("Examples:\n");
-        printf("  %s ServiceChanged \"mpd started\"\n", argv[0]);
+        printf("  %s ServiceChanged \"naa started\"\n", argv[0]);
         return 1;
     }
     

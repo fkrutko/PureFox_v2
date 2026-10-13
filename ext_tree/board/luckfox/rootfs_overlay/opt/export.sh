@@ -18,14 +18,10 @@ rsync -axclHSzv --delete --one-file-system \
 --exclude=/root/\.ssh/* \
 --exclude=/var/tmp/systemd-private* \
 --exclude=/var/log/* \
---exclude=/var/cache/upmpdcli/* \
 --exclude=/etc/resolv.conf \
---exclude=/var/www/radio.json \
 --exclude=/data/ethaddr.txt \
 --exclude=/root/* \
 --exclude=/etc/init.d/S95* \
---exclude=/usr/aplayer/*.dat \
---exclude=/usr/aprenderer/*.dat \
 /  ppy@luckfox.puredsd.ru::purefox_v2
 
 rm -f /data/*.img

@@ -41,15 +41,12 @@ KEEP_IF_PRESENT="
 /etc/shadow
 /etc/resolv.conf
 /data/ethaddr.txt
-/var/www/radio.json
 /etc/scream_receiver.conf
 /opt/tidal.sqfs
 "
 # Created on the device only, never shipped in the image.
 KEEP_PATTERNS="
 /etc/init.d/S95*
-/usr/aplayer/*.dat
-/usr/aprenderer/*.dat
 /etc/dropbear/dropbear_*_host_key
 "
 

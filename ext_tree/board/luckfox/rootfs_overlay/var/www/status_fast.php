@@ -43,16 +43,7 @@ if (file_exists($status_file)) {
 // Fallback - if C-monitor not working, use old PHP approach
 $services = [
     'naa'         => 'networkaudiod',
-    'raat'        => 'raat_app',
-    'mpd'         => 'mpd', 
-    'squeeze2upn' => 'squeeze2upnp',
-    'aprenderer'  => 'ap2renderer',
-    'aplayer'     => 'aplayer',
     'scream'      => 'scream',
-    'lms'         => 'squeezelite',
-    'shairport'   => 'shairport-sync',
-    'spotify'     => 'librespot',
-    'qobuz'       => 'qobuz-connect',
     'celmusper'   => 'celmusper-trans',
     'tidalconnect'=> 'tidalconnect',
 ];
