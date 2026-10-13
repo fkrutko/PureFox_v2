@@ -64,12 +64,21 @@ cleanup() {
 }
 
 fetch() {   # fetch <name> <out>
+    if [ -z "$HAVE_CURL" ]; then
+        # firmware built before curl was added: BusyBox wget does HTTPS but
+        # does NOT verify the certificate; the image after this update has curl
+        wget -q -T 60 -O "$2" "$BASE/$1"
+        return
+    fi
     curl -fsSL --retry 3 --connect-timeout 20 --max-time 900 -o "$2" "$BASE/$1"
     rc=$?
     # 60: certificate problem — usually the clock is not set yet (no NTP)
     [ $rc -eq 60 ] && log "TLS certificate check failed. Device time: $(date). Check network time (chrony)."
     return $rc
 }
+
+HAVE_CURL=$(command -v curl)
+[ -n "$HAVE_CURL" ] || log "WARNING: curl not found, using BusyBox wget (server certificate not verified)."
 
 # merge_conf <saved-old> <new>: keep the user's values for every KEY= the new file still has
 merge_conf() {
@@ -85,7 +94,7 @@ case "$1" in
     --force) FORCE=1 ;;
     --check)
         log "Installed: $CUR_BUILD"
-        log "Latest:    $(curl -fsSL --connect-timeout 20 --max-time 60 "$BASE/version.txt" 2>/dev/null || echo 'GitHub not reachable')"
+        log "Latest:    $(fetch version.txt - 2>/dev/null || echo 'GitHub not reachable')"
         exit 0 ;;
 esac
 
