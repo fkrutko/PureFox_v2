@@ -1,0 +1,19 @@
+Fix the I2S0 MCLK output mux parents (as in Rockchip's 6.1 kernel)
+
+CRU_CLKSEL_CON21[3:2] selects mclk_i2s0_8ch_tx (0), mclk_i2s0_8ch_rx (1) or
+xin_osc0_half (2). The 5.10 table lists clk_i2s0_8ch_tx_src first, so
+assigning mclk_i2s0_8ch_tx as the parent selects 1 and the MCLK pin carries
+the RX MCLK, which playback never configures: the DAC gets a wrong master
+clock and plays barely audibly.
+
+--- a/drivers/clk/rockchip/clk-rv1106.c
++++ b/drivers/clk/rockchip/clk-rv1106.c
+@@ -237,7 +237,7 @@
+ PNAME(mux_dpll_300m_p)			= { "dpll", "clk_300m_src" };
+ PNAME(clk_i2s0_8ch_tx_p)		= { "clk_i2s0_8ch_tx_src", "clk_i2s0_8ch_tx_frac", "i2s0_mclkin", "xin_osc0_half" };
+ PNAME(clk_i2s0_8ch_rx_p)		= { "clk_i2s0_8ch_rx_src", "clk_i2s0_8ch_rx_frac", "i2s0_mclkin", "xin_osc0_half" };
+-PNAME(i2s0_8ch_mclkout_p)		= { "clk_i2s0_8ch_tx_src", "mclk_i2s0_8ch_tx", "mclk_i2s0_8ch_rx", "xin_osc0_half" };
++PNAME(i2s0_8ch_mclkout_p)		= { "mclk_i2s0_8ch_tx", "mclk_i2s0_8ch_rx", "xin_osc0_half" };
+ PNAME(clk_ref_mipi0_p)			= { "clk_ref_mipi0_src", "clk_ref_mipi0_frac", "xin24m" };
+ PNAME(clk_ref_mipi1_p)			= { "clk_ref_mipi1_src", "clk_ref_mipi1_frac", "xin24m" };
+ PNAME(clk_uart0_p)			= { "clk_uart0_src", "clk_uart0_frac", "xin24m" };
