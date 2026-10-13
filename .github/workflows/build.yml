@@ -1,0 +1,147 @@
+name: Build PureFox
+
+# Every push to MAX_6.X (or a manual run) builds the firmware with Buildroot
+# and publishes a GitHub release:
+#   PureFox-<build>.zip   images for RV1106_Toolkit (env, idblock, uboot, boot, rootfs)
+#   rootfs.squashfs       root filesystem for the online update (/opt/update.sh)
+#   boot.img              kernel + DTB for the online update
+#   version.txt, SHA256SUMS
+# The newest release is "latest": the device updates from
+# https://github.com/fkrutko/PureFox_v2/releases/latest/download/...
+
+on:
+  push:
+    branches: [ MAX_6.X ]
+    paths-ignore:
+      - '**.md'
+      - 'images/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-purefox
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost /usr/local/graalvm /usr/local/share/powershell
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git rsync build-essential cmake device-tree-compiler bc binutils \
+            libncurses-dev clang libclang-dev file zip unzip cpio wget python3 patch perl
+
+      - name: Build id
+        id: ver
+        run: |
+          base=$(sed -n "s/.*PUREFOX_BASE_VERSION', '\([^']*\)'.*/\1/p" \
+                 ext_tree/board/luckfox/rootfs_overlay/var/www/config.php)
+          echo "build=${base:-2.8}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      # caches are saved even if the build fails, so a re-run does not start from zero
+      - name: Restore download cache
+        uses: actions/cache/restore@v4
+        with:
+          path: buildroot/dl
+          key: dl-${{ github.run_id }}
+          restore-keys: dl-
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.run_id }}
+          restore-keys: ccache-
+
+      - name: Enable ccache (CI only)
+        run: |
+          sed -i 's/^# BR2_CCACHE is not set$/BR2_CCACHE=y/' ext_tree/configs/luckfox_pico_max_defconfig
+          grep -n '^BR2_CCACHE=y' ext_tree/configs/luckfox_pico_max_defconfig
+
+      - name: Build
+        env:
+          PUREFOX_BUILD: ${{ steps.ver.outputs.build }}
+          BR2_CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: |
+          set -o pipefail   # without it a failed build.sh is hidden by grep
+          ./build.sh 2>&1 | tee build.log | grep --line-buffered -E '^>>> '
+
+      - name: Save download cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: buildroot/dl
+          key: dl-${{ github.run_id }}
+
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.run_id }}
+
+      - name: Build log (on failure)
+        if: failure()
+        run: |
+          tail -n 300 build.log || true
+          msg=$(tail -n 60 build.log | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=build failed::${msg}"
+
+      - name: Upload log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Package
+        run: |
+          B=${{ steps.ver.outputs.build }}
+          I=buildroot/output/images
+          ls -la $I
+          mkdir -p release flash
+          for f in env.img idblock.img uboot.img boot.img rootfs.img rootfs.squashfs; do
+            test -f $I/$f || { echo "::error title=package::missing $I/$f"; exit 1; }
+          done
+          # the five partition images for RV1106_Toolkit
+          cp $I/env.img $I/idblock.img $I/uboot.img $I/boot.img $I/rootfs.img flash/
+          (cd flash && zip -q -9 ../release/PureFox-$B.zip *)
+          cp $I/rootfs.squashfs $I/boot.img release/
+          echo "$B" > release/version.txt
+          (cd release && sha256sum PureFox-$B.zip rootfs.squashfs boot.img > SHA256SUMS)
+          ls -la release
+          cat release/SHA256SUMS
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.build }}
+          name: PureFox ${{ steps.ver.outputs.build }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            PureFox ${{ steps.ver.outputs.build }} (commit ${{ github.sha }})
+
+            Full flash with RV1106_Toolkit: unzip `PureFox-${{ steps.ver.outputs.build }}.zip`,
+            Download → USB → firmware folder → check all → Download.
+
+            Online update: the version button in the web interface (uses rootfs.squashfs and boot.img from here).
+          files: |
+            release/PureFox-${{ steps.ver.outputs.build }}.zip
+            release/rootfs.squashfs
+            release/boot.img
+            release/version.txt
+            release/SHA256SUMS

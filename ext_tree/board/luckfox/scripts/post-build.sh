@@ -134,6 +134,12 @@ if [ -d "$TARGET_DIR/usr/lib/tidal" ] && [ "$(ls -A $TARGET_DIR/usr/lib/tidal/*.
     rm -rf $TARGET_DIR/usr/lib/tidal/*
 fi
 
+# Build id: shown in the web UI and compared by /opt/update.sh with the
+# latest GitHub release. CI sets PUREFOX_BUILD (e.g. 2.8.12); a local build
+# gets <base>-local-<date>, so the online update always offers the release.
+PUREFOX_BASE=$(sed -n "s/.*PUREFOX_BASE_VERSION', '\([^']*\)'.*/\1/p" "$TARGET_DIR/var/www/config.php")
+echo "${PUREFOX_BUILD:-${PUREFOX_BASE:-2.8}-local-$(date +%Y%m%d%H%M)}" > "$TARGET_DIR/etc/purefox-release"
+
 
 
 
