@@ -2,7 +2,7 @@
 
 **Network audio endpoint on Luckfox Pico Max / Ultra with external clock support**
 
-> This is a fork of [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2) (`MAX_6.X` branch). It keeps only the NAA and Scream players, makes the output bit-perfect and lets you choose the Linux kernel: 6.1 or 5.10. See [Changes in this fork](#changes-in-this-fork).
+> This is a fork of [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2) (`MAX_6.X` branch). It keeps only the NAA and Scream players, makes the output bit-perfect and lets you choose the Linux kernel: 6.1 or 5.10. A [Low noise](#low-noise-tab) tab of the web page sets the CPU frequency, I2S pin drive and DMA periods. See [Changes in this fork](#changes-in-this-fork).
 
 
 ## About
@@ -43,7 +43,7 @@ Forum users reported that firmware 1.6 (kernel 5.10) sounds different from 2.8 (
 | **5.10** | 5.10.160, the PureFox 1.x kernel and config | this fork's | up to DSD1024 | no |
 | **5.10 (old drv)** | 5.10.160-pf16, the same kernel | PureFox 1.6's, with its device trees and clock setup | up to DSD512 | no |
 
-- **6.1 and 5.10** run the same I2S driver (bit-perfect, the same I2S settings), so they differ only in the kernel.
+- **6.1 and 5.10** run the same I2S driver (bit-perfect, the same I2S settings), so they differ only in the kernel and, by default, the CPU clock (below).
 - **5.10 and 5.10 (old drv)** differ only in the I2S driver and device trees. The old driver has a software volume control; it stays at 100 and the web interface does not change it, and at 100 PCM passes unaltered.
 - **Switching.** The "Kernel 6.1 | 5.10 | 5.10 (old drv)" selector on the **Low noise** tab writes the selected kernel and the device tree of the current I2S mode to the boot partition, verifies them and reboots the board. Do not power off while it writes; if the write fails, retry it or reflash the board with RV1106_Toolkit. From the shell: `/opt/kernel.sh 6.1`, `/opt/kernel.sh 5.10` or `/opt/kernel.sh 1.6` (5.10 with the old driver), then `reboot`; `/opt/kernel.sh` with no argument shows the running and the selected kernel.
 - **CPU clock.** With the default setting, 5.10 runs the CPU at 1608 MHz (performance governor) and 6.1 stays at the 1104 MHz the bootloader sets. The **Low noise** tab can set the same frequency for both.
@@ -67,7 +67,7 @@ From the shell: `/opt/lownoise.sh set KEY VALUE`, see the script for the keys.
 ### Players
 
 - **Only NAA (HQPlayer) and Scream remain.** Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli, APlayer, APrender, Spotify Connect, Qobuz Connect, Tidal Connect and CelMusper are removed, together with the libraries only they used. The root filesystem image shrank from about 39 MB to 20 MB (about 30 MB with the three kernels of the [kernel choice](#linux-kernel)).
-- **Scream instead of APScream.** The closed-source APScream receiver is replaced by the open-source [Scream](https://github.com/duncanthrax/scream) 3.6 receiver (ALSA output). It needs the standard Scream driver on Windows; APScream's ASIO sender in AP or TCP mode is not supported. The settings page sets the mode (multicast/unicast), multicast group, port, network interface, latency and ALSA device.
+- **Scream instead of APScream.** The closed-source APScream receiver is replaced by the open-source [Scream](https://github.com/duncanthrax/scream) 3.6 receiver (ALSA output). It needs the standard Scream driver on Windows; APScream's ASIO sender in AP or TCP mode is not supported. The settings page sets the mode (multicast/unicast), multicast group, port, network interface, latency and ALSA device. Scream may let ALSA resample a rate the I2S output does not take; the **Scream resampling** switch on the [Low noise](#low-noise-tab) tab turns that off.
 - **NAA**: newer `networkaudiod`; the name shown in HQPlayer is unique per board (hostname plus the last six hex digits of the MAC address).
 - **The selected player survives a power cut**: the choice is written to flash as soon as it is made.
 
