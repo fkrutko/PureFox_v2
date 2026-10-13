@@ -285,12 +285,6 @@ h1 {
   }
 }
 
-
-.volume-control {
-  padding-left: 25px;
-  padding-right: 15px;
-}
-
 .player-buttons,
 .ap-buttons,
 .streaming-buttons {
@@ -499,107 +493,10 @@ h1 {
   flex-shrink: 0;
 }
 
-/* Volume Control */
-.volume-control {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  padding-left: 30px;
-  flex: 1;
-  max-width: 450px;
-  min-width: 200px;
-}
-
-/* Default: use margins for compatibility */
-.volume-control > * {
-  margin-right: 10px;
-}
-
-.volume-control > *:last-child {
-  margin-right: 0;
-}
-
-/* When gap is supported, use it and remove margins */
-.supports-gap .volume-control {
-  gap: 10px;
-}
-
-.supports-gap .volume-control > * {
-  margin-right: 0;
-}
-
-.settings-icon.volume-icon {
-  opacity: 0.6 !important;
-  transition: opacity 0.2s ease;
-  cursor: pointer;
-  flex-shrink: 0;
-  margin-left: -10px;
-}
-
-.volume-control:hover .settings-icon.volume-icon {
-  opacity: 1 !important;
-}
-
-.volume-slider {
-  flex: 1;
-  min-width: 200px;
-  height: 30px;
-  background: linear-gradient(to bottom, transparent calc(50% - 1.5px), rgba(255, 255, 255, 0.2) calc(50% - 1.5px), rgba(255, 255, 255, 0.2) calc(50% + 1.5px), transparent calc(50% + 1.5px));
-  outline: none;
-  border: none;
-  -webkit-appearance: none;
-  cursor: pointer;
-  position: relative;
-  border-radius: 15px;
-}
-
-.volume-slider::-webkit-slider-track {
-  height: 3px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 1.5px;
-  border: none;
-  -webkit-appearance: none;
-}
-
-.volume-slider::-moz-range-track {
-  height: 3px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 1.5px;
-  border: none;
-}
-
-/* Hide gradient background in Firefox */
-@-moz-document url-prefix() {
-  .volume-slider {
-    background: transparent !important;
-  }
-}
-
 /* Responsive design for tablets and large phones */
 @media (max-width: 584px) {
   .alsa-toggle {
     gap: 15px; /* Reduce gap to save space */
-  }
-  
-  .volume-control {
-    flex: 1;
-    min-width: 180px; /* Reduce minimum width */
-    max-width: 300px; /* Limit maximum width */
-    gap: 8px; /* Reduce internal gap */
-    padding-left: 8px; /* Reduce left padding for more space */
-  }
-  
-  .settings-icon.volume-icon {
-    margin-left: 0; /* Remove desktop margin on mobile */
-  }
-  
-  .volume-slider {
-    min-width: 120px; /* Reduce slider size */
-  }
-  
-  .volume-display {
-    min-width: 30px; /* Reduce area for % display */
-    font-size: 11px; /* Reduce font size */
   }
 }
 
@@ -614,128 +511,6 @@ h1 {
   .alsa-left {
     align-self: flex-start;
   }
-  
-  .volume-control {
-    width: 100%; /* Use full row width */
-    max-width: none; /* Remove width limitation */
-    min-width: auto;
-    gap: 6px; /* Even smaller gap */
-    padding-left: 5px; /* Minimal left padding for full width */
-  }
-  
-  .settings-icon.volume-icon {
-    margin-left: 0; /* No margin on narrow screens */
-  }
-  
-  .volume-slider {
-    min-width: 120px; /* Adaptive size */
-    flex: 1;
-    height: 3px;
-  }
-  
-  .volume-display {
-    min-width: 28px; /* Very narrow */
-    font-size: 10px; /* Small font */
-  }
-}
-
-/* Very narrow screens */
-@media (max-width: 320px) {
-  .volume-control {
-    gap: 4px; /* Minimal gap */
-    padding: 6px 8px; /* Reduce padding */
-  }
-  
-  .volume-display {
-    min-width: 25px; /* Very narrow */
-    font-size: 9px; /* Very small */
-  }
-  
-  .volume-slider {
-    min-width: 100px; /* Minimum for slider */
-  }
-}
-
-.volume-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  background: #2d2d2d;
-  border: 2.5px solid #777;
-  border-radius: 50%;
-  cursor: pointer;
-  transition: transform 0.2s ease;
-}
-
-.volume-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-}
-
-.volume-slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  background: #2d2d2d;
-  border: 2.5px solid #777;
-  border-radius: 50%;
-  cursor: pointer;
-  transition: transform 0.2s ease;
-}
-
-@media (max-width: 480px) {
-  .volume-slider::-webkit-slider-thumb {
-    width: 15px;
-    height: 15px;
-  }
-  
-  .volume-slider::-moz-range-thumb {
-    width: 15px;
-    height: 15px;
-  }
-}
-
-.volume-slider::-moz-range-thumb:hover {
-  transform: scale(1.2);
-}
-
-.volume-display {
-  font-size: 16px;
-  font-weight: 500;
-  color: #e0e0e0;
-  min-width: 22px;
-  text-align: left;
-  opacity: 0.8;
-  flex-shrink: 0;
-  white-space: nowrap;
-  margin-left: 0px;
-  overflow: hidden; 
-}
-
-/* Disabled styles for volume controls when in ±L/±R mode - same as USB DACs without volume */
-.volume-slider:disabled {
-  opacity: 0.4 !important;
-  cursor: not	-allowed !important;
-  pointer-events: none;
-}
-
-.volume-slider:disabled::-webkit-slider-thumb {
-  background: #2d2d2d !important;
-  border: 2.5px solid #777 !important;
-  opacity: 1 !important;
-  cursor: not-allowed;
-}
-
-.volume-slider:disabled::-moz-range-thumb {
-  background: #2d2d2d !important;
-  border: 2.5px solid #777 !important;
-  opacity: 1 !important;
-  cursor: not-allowed;
-}
-
-.settings-icon.volume-icon[style*="opacity: 0.4"] {
-  opacity: 0.4 !important;
-  cursor: not-allowed !important;
-  pointer-events: none !important;
 }
 
 .i2s-settings-link {

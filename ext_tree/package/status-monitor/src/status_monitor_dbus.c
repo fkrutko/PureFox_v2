@@ -7,7 +7,6 @@
 #include <time.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <math.h>
 #include <dirent.h>
 #include <ctype.h>
 #include <errno.h>
@@ -27,7 +26,6 @@
 #define EVENT_SOCKET "/tmp/status_monitor_events.sock"
 #define EVENT_CLIENTS_MAX 4
 #define STATUS_POLL_MAX (EVENT_CLIENTS_MAX + 10)
-#define VOLUME_SAVE_DELAY_MS 1000
 
 volatile int running = 1;
 DBusConnection *dbus_conn = NULL;
@@ -35,9 +33,6 @@ static int event_server = -1;
 static int event_clients[EVENT_CLIENTS_MAX] = { -1, -1, -1, -1 };
 static char status_json[512];
 static char boot_id[40];
-static snd_mixer_t *volume_event_mixer;
-static int pending_volume_persist = -1;
-static long long volume_persist_at;
 static pid_t active_service_pid;
 static long long last_service_discovery;
 
@@ -169,40 +164,11 @@ static long long monotonic_ms(void)
     return now.tv_sec * 1000LL + now.tv_nsec / 1000000;
 }
 
-static void schedule_volume_persist(const char *volume)
-{
-    int value;
-
-    if (sscanf(volume, "%d%%", &value) != 1 || value < 0 || value > 100)
-        return;
-    pending_volume_persist = value;
-    volume_persist_at = monotonic_ms() + VOLUME_SAVE_DELAY_MS;
-}
-
-static void persist_pending_volume(void)
-{
-    FILE *file;
-
-    if (pending_volume_persist < 0 || monotonic_ms() < volume_persist_at)
-        return;
-    file = fopen("/data/i2s_volume.status.tmp", "w");
-    if (!file)
-        return;
-    fprintf(file, "%d\n", pending_volume_persist);
-    fclose(file);
-    if (!rename("/data/i2s_volume.status.tmp", "/data/i2s_volume"))
-        pending_volume_persist = -1;
-}
-
 // Structure for storing current state
 typedef struct {
     char active_service[32];
     char alsa_state[16];
     int usb_dac;
-    char volume[16];
-    int muted;
-    int volume_control_available;
-    int mute_control_available;
     char mixer_control_name[64];  // Found ALSA control name
     int mixer_control_index;      // Control index
     bool mixer_control_valid;     // Is cached control still valid
@@ -213,10 +179,6 @@ system_status_t current_status = {
     .active_service = "",
     .alsa_state = "unknown",
     .usb_dac = 0,
-    .volume = "100%",
-    .muted = 0,
-    .volume_control_available = 1,
-    .mute_control_available = 1,
     .mixer_control_name = "",
     .mixer_control_index = 0,
     .mixer_control_valid = false,
@@ -391,7 +353,7 @@ int check_usb_dac() {
     return find_usb_audio_card() >= 0;
 }
 
-// Find and cache ALSA mixer control (expensive operation, call only when DAC changes)
+// Find and cache the ALSA mute (playback switch) control (expensive operation, call only when DAC changes)
 bool find_mixer_control() {
     snd_mixer_t *handle;
     snd_mixer_elem_t *elem;
@@ -428,7 +390,7 @@ bool find_mixer_control() {
         snd_mixer_selem_id_set_name(sid, standard_names[i]);
         snd_mixer_elem_t* test_elem = snd_mixer_find_selem(handle, sid);
         
-        if (test_elem && snd_mixer_selem_has_playback_volume(test_elem)) {
+        if (test_elem && snd_mixer_selem_has_playback_switch(test_elem)) {
             elem = test_elem;
         }
     }
@@ -437,9 +399,9 @@ bool find_mixer_control() {
         for (elem = snd_mixer_first_elem(handle); elem; elem = snd_mixer_elem_next(elem)) {
             if (snd_mixer_selem_is_active(elem)) {
                 const char *name = snd_mixer_selem_get_name(elem);
-                bool has_vol = snd_mixer_selem_has_playback_volume(elem);
+                bool has_switch = snd_mixer_selem_has_playback_switch(elem);
                 
-                if (has_vol && name) {
+                if (has_switch && name) {
                     if (strstr(name, "Capture") || strstr(name, "Mic")) {
                         continue;
                     }
@@ -473,159 +435,12 @@ bool find_mixer_control() {
     return current_status.mixer_control_valid;
 }
 
-// ALSA API for reading volume (uses cached control)
-void get_volume_status_alsa(char* volume, int* muted) {
-    snd_mixer_t *handle;
-    snd_mixer_elem_t *elem;
-    snd_mixer_selem_id_t *sid;
-    long min, max, val;
-    long db_min, db_max, db_value;
-    double normalized, min_normalized;
-    int switch_val;
-    snd_mixer_selem_channel_id_t volume_channel = SND_MIXER_SCHN_FRONT_LEFT;
-    
-    strcpy(volume, "100%");
-    *muted = 0;
-    
-    // If no valid cached control, try to find it
-    if (!current_status.mixer_control_valid) {
-        if (!find_mixer_control()) {
-            return;
-        }
-    }
-    
-    if (snd_mixer_open(&handle, 0) < 0) return;
-    if (snd_mixer_attach(handle, "default") < 0) {
-        snd_mixer_close(handle);
-        return;
-    }
-    if (snd_mixer_selem_register(handle, NULL, NULL) < 0) {
-        snd_mixer_close(handle);
-        return;
-    }
-    if (snd_mixer_load(handle) < 0) {
-        snd_mixer_close(handle);
-        return;
-    }
-    
-    // Use cached control name
-    snd_mixer_selem_id_alloca(&sid);
-    snd_mixer_selem_id_set_name(sid, current_status.mixer_control_name);
-    snd_mixer_selem_id_set_index(sid, current_status.mixer_control_index);
-    elem = snd_mixer_find_selem(handle, sid);
-    
-    if (!elem) {
-        // Cached control not found - invalidate cache and retry
-        printf("Cached control '%s',%d not found, invalidating cache\n",
-               current_status.mixer_control_name, current_status.mixer_control_index);
-        current_status.mixer_control_valid = false;
-        snd_mixer_close(handle);
-        return;
-    }
-    
-    if (snd_mixer_selem_has_playback_volume(elem)) {
-        snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
-        
-        int read_success = 0;
-        
-        if (snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_LEFT, &val) >= 0)
-            read_success = 1;
-        
-        if (!read_success &&
-            snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_FRONT_RIGHT, &val) >= 0) {
-            read_success = 1;
-            volume_channel = SND_MIXER_SCHN_FRONT_RIGHT;
-        }
-
-        if (!read_success &&
-            snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_MONO, &val) >= 0) {
-            read_success = 1;
-            volume_channel = SND_MIXER_SCHN_MONO;
-        }
-        
-        if (read_success &&
-            snd_mixer_selem_get_playback_dB_range(elem, &db_min, &db_max) >= 0 &&
-            db_min < db_max &&
-            snd_mixer_selem_get_playback_dB(elem, volume_channel, &db_value) >= 0) {
-            if (db_max - db_min <= 2400) {
-                normalized = (double)(db_value - db_min) / (db_max - db_min);
-            } else {
-                normalized = pow(10.0, (double)(db_value - db_max) / 6000.0);
-                min_normalized = pow(10.0, (double)(db_min - db_max) / 6000.0);
-                normalized = (normalized - min_normalized) / (1.0 - min_normalized);
-            }
-            snprintf(volume, 16, "%d%%", (int)lround(normalized * 100.0));
-        } else if (read_success && max > min) {
-            int percent = (int)(((val - min) * 100 + (max - min) / 2) /
-                                (max - min));
-            snprintf(volume, 16, "%d%%", percent);
-        }
-    }
-    
-    if (snd_mixer_selem_has_playback_switch(elem)) {
-        if (snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_FRONT_LEFT,
-                                                 &switch_val) >= 0)
-            *muted = !switch_val;
-        else if (snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_FRONT_RIGHT,
-                                                      &switch_val) >= 0)
-            *muted = !switch_val;
-        else if (snd_mixer_selem_get_playback_switch(elem, SND_MIXER_SCHN_MONO,
-                                                      &switch_val) >= 0)
-            *muted = !switch_val;
-    }
-    
-    snd_mixer_close(handle);
-}
-
-static void reset_volume_event_mixer(void)
-{
-    if (volume_event_mixer) {
-        snd_mixer_close(volume_event_mixer);
-        volume_event_mixer = NULL;
-    }
-}
-
-static bool init_volume_event_mixer(void)
-{
-    if (volume_event_mixer)
-        return true;
-    if (snd_mixer_open(&volume_event_mixer, 0) < 0)
-        return false;
-    if (snd_mixer_attach(volume_event_mixer, "default") < 0 ||
-        snd_mixer_selem_register(volume_event_mixer, NULL, NULL) < 0 ||
-        snd_mixer_load(volume_event_mixer) < 0) {
-        reset_volume_event_mixer();
-        return false;
-    }
-    return true;
-}
-
-static bool wait_for_volume_event(int timeout_ms)
-{
-    int ret;
-
-    if (!init_volume_event_mixer())
-        return false;
-    ret = snd_mixer_wait(volume_event_mixer, timeout_ms);
-    if (ret <= 0) {
-        if (ret < 0)
-            reset_volume_event_mixer();
-        return false;
-    }
-    if (snd_mixer_handle_events(volume_event_mixer) < 0) {
-        reset_volume_event_mixer();
-        return false;
-    }
-    return true;
-}
-
 /* Wait for every source that can change published status without polling. */
-static bool poll_status_events(int timeout_ms)
+static void poll_status_events(int timeout_ms)
 {
     struct pollfd fds[STATUS_POLL_MAX];
-    int count = 0, dbus_index = -1, mixer_index = -1, mixer_count = 0;
+    int count = 0, dbus_index = -1;
     int i, ret;
-    bool volume_event = false;
 
     if (dbus_conn) {
         int fd;
@@ -642,144 +457,19 @@ static bool poll_status_events(int timeout_ms)
             fds[count++] = (struct pollfd){ .fd = event_clients[i], .events = POLLIN };
     }
 
-    if (init_volume_event_mixer()) {
-        mixer_count = snd_mixer_poll_descriptors_count(volume_event_mixer);
-        if (mixer_count > 0 && count + mixer_count <= STATUS_POLL_MAX) {
-            mixer_index = count;
-            if (snd_mixer_poll_descriptors(volume_event_mixer, &fds[count],
-                                           mixer_count) < 0) {
-                reset_volume_event_mixer();
-                mixer_index = -1;
-            } else {
-                count += mixer_count;
-            }
-        }
-    }
-
     ret = poll(fds, count, timeout_ms);
     if (ret <= 0)
-        return false;
+        return;
 
     if (dbus_index >= 0 && fds[dbus_index].revents)
         dbus_connection_read_write_dispatch(dbus_conn, 0);
 
-    if (mixer_index >= 0) {
-        unsigned short revents = 0;
-
-        /* A USB DAC may disappear while its control fd is in poll().  The
-         * stale fd then stays readable/error-ready forever; keeping it turns
-         * this loop into a 100% CPU spin until ALSA eventually recovers. */
-        if (fds[mixer_index].revents & (POLLERR | POLLHUP | POLLNVAL) ||
-            snd_mixer_poll_descriptors_revents(volume_event_mixer,
-                                               &fds[mixer_index], mixer_count,
-                                               &revents) < 0) {
-            reset_volume_event_mixer();
-        } else if (revents) {
-            if (snd_mixer_handle_events(volume_event_mixer) < 0)
-                reset_volume_event_mixer();
-            else
-                volume_event = true;
-        }
-    }
     service_event_clients();
-    return volume_event;
 }
 
-static int status_poll_timeout(long long last_volume_poll)
+static int status_poll_timeout(void)
 {
-    long long now = monotonic_ms();
-    long long next_poll = last_volume_poll +
-        (have_event_clients() ? 250 : 1000);
-    long long deadline = next_poll;
-
-    if (pending_volume_persist >= 0 && volume_persist_at < deadline)
-        deadline = volume_persist_at;
-    if (deadline <= now)
-        return 0;
-    return (int)(deadline - now);
-}
-
-static void refresh_volume_status_if_changed(time_t now)
-{
-    char old_volume[16];
-    int old_muted = current_status.muted;
-    bool volume_changed;
-
-    strcpy(old_volume, current_status.volume);
-    get_volume_status_alsa(current_status.volume, &current_status.muted);
-    volume_changed = strcmp(old_volume, current_status.volume) != 0;
-    if (volume_changed || old_muted != current_status.muted) {
-        printf("Volume changed: %s (muted: %s)\n", current_status.volume,
-               current_status.muted ? "yes" : "no");
-        current_status.last_update = now;
-        update_status_file();
-    }
-    if (volume_changed)
-        schedule_volume_persist(current_status.volume);
-}
-
-static bool get_dbus_volume(DBusMessage *message, int *volume)
-{
-    DBusMessageIter args;
-    const char *value;
-    char *end;
-    long parsed;
-
-    if (!dbus_message_iter_init(message, &args) ||
-        dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING)
-        return false;
-    dbus_message_iter_get_basic(&args, &value);
-    parsed = strtol(value, &end, 10);
-    if (end == value || strcmp(end, "%") || parsed < 0 || parsed > 100)
-        return false;
-    *volume = (int)parsed;
-    return true;
-}
-
-// Check USB DAC control availability using ALSA API
-void check_usb_controls(int* volume_available, int* mute_available) {
-    *volume_available = 0;
-    *mute_available = 0;
-    int usb_card = find_usb_audio_card();
-    char device_name[16];
-    snd_mixer_t *mixer = NULL;
-    snd_mixer_elem_t *elem;
-
-    if (usb_card < 0)
-        return;
-    snprintf(device_name, sizeof(device_name), "hw:%d", usb_card);
-
-    if (snd_mixer_open(&mixer, 0) >= 0) {
-        if (snd_mixer_attach(mixer, device_name) >= 0) {
-            if (snd_mixer_selem_register(mixer, NULL, NULL) >= 0) {
-                if (snd_mixer_load(mixer) >= 0) {
-                    for (elem = snd_mixer_first_elem(mixer); elem; elem = snd_mixer_elem_next(elem)) {
-                        if (snd_mixer_selem_is_active(elem)) {
-                            const char *name = snd_mixer_selem_get_name(elem);
-                            
-                            if (name && (strstr(name, "Capture") || strstr(name, "Mic"))) {
-                                continue;
-                            }
-                            
-                            if (!*volume_available && snd_mixer_selem_has_playback_volume(elem)) {
-                                if (snd_mixer_selem_has_playback_channel(elem, SND_MIXER_SCHN_FRONT_LEFT) ||
-                                    snd_mixer_selem_has_playback_channel(elem, SND_MIXER_SCHN_MONO)) {
-                                    *volume_available = 1;
-                                }
-                            }
-                            
-                            if (!*mute_available && snd_mixer_selem_has_playback_switch(elem)) {
-                                *mute_available = 1;
-                            }
-                            
-                            if (*volume_available && *mute_available) break;
-                        }
-                    }
-                }
-            }
-        }
-        snd_mixer_close(mixer);
-    }
+    return have_event_clients() ? 250 : 1000;
 }
 
 // Update mixer control cache file
@@ -815,14 +505,10 @@ void update_status_file() {
     
     snprintf(status_json, sizeof(status_json),
              "{\"active_service\":\"%s\",\"alsa_state\":\"%s\","
-             "\"usb_dac\":%s,\"volume\":\"%s\",\"muted\":%s,"
-             "\"volume_control_available\":%s,\"mute_control_available\":%s,"
+             "\"usb_dac\":%s,"
              "\"timestamp\":%ld,\"boot_id\":\"%s\",\"source\":\"dbus_monitor\"}\n",
              current_status.active_service, current_status.alsa_state,
-             current_status.usb_dac ? "true" : "false", current_status.volume,
-             current_status.muted ? "true" : "false",
-             current_status.volume_control_available ? "true" : "false",
-             current_status.mute_control_available ? "true" : "false",
+             current_status.usb_dac ? "true" : "false",
              current_status.last_update, boot_id);
     fputs(status_json, fp);
     
@@ -857,27 +543,15 @@ void refresh_all_status() {
         // Invalidate cached control and force rescan
         current_status.mixer_control_valid = false;
         find_mixer_control();
-        reset_volume_event_mixer();
-    }
-    
-    get_volume_status_alsa(current_status.volume, &current_status.muted);
-    
-    // Update control availability based on current state
-    if (strcmp(current_status.alsa_state, "usb") == 0 && !current_status.usb_dac) {
-        current_status.volume_control_available = 0;
-        current_status.mute_control_available = 0;
-    } else if (strcmp(current_status.alsa_state, "usb") == 0 && current_status.usb_dac) {
-        check_usb_controls(&current_status.volume_control_available, &current_status.mute_control_available);
-    } else {
-        current_status.volume_control_available = 1;
-        current_status.mute_control_available = 1;
+    } else if (!current_status.mixer_control_valid) {
+        find_mixer_control();
     }
     
     current_status.last_update = time(NULL);
     
     update_status_file();
-    printf("Status updated: service=%s, alsa=%s, volume=%s\n", 
-           current_status.active_service, current_status.alsa_state, current_status.volume);
+    printf("Status updated: service=%s, alsa=%s\n",
+           current_status.active_service, current_status.alsa_state);
 }
 
 // D-Bus signal handler
@@ -913,46 +587,8 @@ DBusHandlerResult handle_dbus_message(DBusConnection *connection, DBusMessage *m
                 // Invalidate cache and rescan
                 current_status.mixer_control_valid = false;
                 find_mixer_control();
-                reset_volume_event_mixer();
-                
-                // Recalculate control availability
-                if (strcmp(current_status.alsa_state, "usb") == 0 && !current_status.usb_dac) {
-                    current_status.volume_control_available = 0;
-                    current_status.mute_control_available = 0;
-                } else if (strcmp(current_status.alsa_state, "usb") == 0 && current_status.usb_dac) {
-                    check_usb_controls(&current_status.volume_control_available, 
-                                     &current_status.mute_control_available);
-                } else {
-                    current_status.volume_control_available = 1;
-                    current_status.mute_control_available = 1;
-                }
             }
             
-            current_status.last_update = time(NULL);
-            update_status_file();
-        } else if (member && strcmp(member, "VolumeChanged") == 0) {
-            char actual_alsa_state[16];
-            int volume;
-
-            printf("Volume change detected via D-Bus\n");
-            /*
-             * The encoder can be the first producer of a status event after
-             * the output is switched. Do not publish its volume update with
-             * a stale I2S/USB state, or the web UI can flip the output toggle
-             * back to the previous mode.
-             */
-            get_alsa_state(actual_alsa_state);
-            if (strcmp(actual_alsa_state, current_status.alsa_state) != 0) {
-                refresh_all_status();
-                return DBUS_HANDLER_RESULT_HANDLED;
-            }
-            if (get_dbus_volume(message, &volume)) {
-                snprintf(current_status.volume, sizeof(current_status.volume),
-                         "%d%%", volume);
-                schedule_volume_persist(current_status.volume);
-            } else {
-                get_volume_status_alsa(current_status.volume, &current_status.muted);
-            }
             current_status.last_update = time(NULL);
             update_status_file();
         }
@@ -1021,21 +657,12 @@ int main() {
     
     if (init_dbus() < 0) {
         static time_t last_full_refresh = 0;
-        static long long last_volume_poll = 0;
 
-        printf("Failed to initialize D-Bus, using ALSA event fallback\n");
+        printf("Failed to initialize D-Bus, using polling fallback\n");
         refresh_all_status();
         while (running) {
-            service_event_clients();
-            if (wait_for_volume_event(200))
-                refresh_volume_status_if_changed(time(NULL));
-            if (monotonic_ms() - last_volume_poll >=
-                (have_event_clients() ? 250 : 1000)) {
-                refresh_volume_status_if_changed(time(NULL));
-                last_volume_poll = monotonic_ms();
-            }
+            poll_status_events(200);
             refresh_active_service_state();
-            persist_pending_volume();
             if (time(NULL) - last_full_refresh > 30) {
                 refresh_all_status();
                 last_full_refresh = time(NULL);
@@ -1047,22 +674,13 @@ int main() {
         printf("Entering D-Bus event loop\n");
         while (running) {
             static time_t last_full_refresh = 0;
-            static long long last_volume_poll = 0;
             time_t now = time(NULL);
 
             /* Process messages already queued before blocking in poll(). */
             dbus_connection_read_write_dispatch(dbus_conn, 0);
-            if (poll_status_events(status_poll_timeout(last_volume_poll)))
-                refresh_volume_status_if_changed(now);
+            poll_status_events(status_poll_timeout());
 
             refresh_active_service_state();
-
-            if (monotonic_ms() - last_volume_poll >=
-                (have_event_clients() ? 250 : 1000)) {
-                refresh_volume_status_if_changed(now);
-                last_volume_poll = monotonic_ms();
-            }
-            persist_pending_volume();
             
             if (now - last_full_refresh > 30) {
                 refresh_all_status();
@@ -1082,10 +700,6 @@ int main() {
     }
     if (event_server >= 0)
         close(event_server);
-    if (pending_volume_persist >= 0)
-        volume_persist_at = 0;
-    persist_pending_volume();
-    reset_volume_event_mixer();
     unlink(EVENT_SOCKET);
     printf("D-Bus Status Monitor stopped\n");
     

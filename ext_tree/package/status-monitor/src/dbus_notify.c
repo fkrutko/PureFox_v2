@@ -59,7 +59,6 @@ int main(int argc, char *argv[]) {
         printf("Usage: %s <signal_name> [message]\n", argv[0]);
         printf("Examples:\n");
         printf("  %s ServiceChanged \"mpd started\"\n", argv[0]);
-        printf("  %s VolumeChanged \"volume changed\"\n", argv[0]);
         return 1;
     }
     

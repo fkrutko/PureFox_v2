@@ -1,13 +1,13 @@
 #!/bin/sh
 
-# Find mixer control with playback volume and switch capabilities
+# Find mixer control with a playback switch (mute)
 MIXER=$(amixer 2>/dev/null | awk '
     /^Simple mixer control/ {
         control = $0
         gsub(/.*'\''/, "", control)
         gsub(/'\''.*/, "", control)
     }
-    /Capabilities:/ && /pvolume/ && /pswitch/ {
+    /Capabilities:/ && /pswitch/ {
         print control
         exit
     }

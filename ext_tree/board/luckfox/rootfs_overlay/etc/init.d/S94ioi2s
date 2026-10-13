@@ -27,18 +27,6 @@ start() {
         exit 1
     fi
     echo "OK"
-
-    if [ -r /data/i2s_volume ]; then
-        VOLUME=$(tr -d '[:space:]' < /data/i2s_volume)
-        case "$VOLUME" in
-            ''|*[!0-9]*) ;;
-            *)
-                if [ "$VOLUME" -le 100 ]; then
-                    /usr/bin/amixer -M -q sset PCM "${VOLUME}%" 2>/dev/null
-                fi
-                ;;
-        esac
-    fi
 }
 
 stop() {

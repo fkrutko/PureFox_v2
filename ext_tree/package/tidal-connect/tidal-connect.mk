@@ -22,7 +22,6 @@ endef
 
 define TIDAL_CONNECT_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0644 $(@D)/tidal.sqfs $(TARGET_DIR)/opt/tidal.sqfs
-	$(INSTALL) -D -m 0755 $(@D)/bin/tc_volume $(TARGET_DIR)/usr/sbin/tc_volume
 	$(INSTALL) -D -m 0755 $(@D)/S95tidal $(TARGET_DIR)/etc/rc.pure/S95tidal
 endef
 

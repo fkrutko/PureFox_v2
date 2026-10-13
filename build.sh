@@ -104,7 +104,7 @@ fi
 # Generic local packages are copied into Buildroot's build tree only once.
 # Rebuild these audio binaries so a normal ./build.sh always includes source
 # edits made under ext_tree/package/.
-for rebuild_target in status-monitor-rebuild volume-encoder-rebuild; do
+for rebuild_target in status-monitor-rebuild; do
     make O="$OUTPUT_DIR" "$rebuild_target"
 done
 

@@ -41,7 +41,6 @@ KEEP_IF_PRESENT="
 /etc/shadow
 /etc/resolv.conf
 /data/ethaddr.txt
-/data/i2s_volume
 /var/www/radio.json
 /usr/apscream/config.txt
 /opt/tidal.sqfs

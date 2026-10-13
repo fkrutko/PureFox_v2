@@ -99,7 +99,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'apscream', 'shairport-sync', 'squeezelite', 'librespot', 'qobuz-connect', 'celmusper-trans', 'tidalconnect', 'tc_volume', 'avahi-publish-service']);
+    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'apscream', 'shairport-sync', 'squeezelite', 'librespot', 'qobuz-connect', 'celmusper-trans', 'tidalconnect', 'avahi-publish-service']);
 
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');

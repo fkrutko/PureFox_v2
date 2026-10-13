@@ -66,11 +66,6 @@
                     <img src="assets/img/settings.svg" class="settings-icon" alt="I2S Settings">
                 </a>
             </div>
-            <div class="volume-control">
-                <img src="assets/img/volume.svg" class="settings-icon volume-icon" alt="Volume" id="volume-icon">
-                <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="0">
-                <span id="volume-display" class="volume-display">--</span>
-            </div>
         </div>
 
         <!-- Update and power management buttons -->

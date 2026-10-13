@@ -42,10 +42,6 @@
 		rockchip,grf = <&grf>;
 		rockchip,playback-only;
 		rockchip,i2s-tx-route = <2 3 0 1>;
-	        rockchip,playback-volume-control;    
-	        rockchip,volume-min = <0>;           
-	        rockchip,volume-max = <100>;         
-	        rockchip,volume-default = <100>;     
 		mute-gpios = <&gpio1 RK_PD3 GPIO_ACTIVE_HIGH>;
 		mute-inv-gpios = <&gpio2 RK_PA5 GPIO_ACTIVE_HIGH>;
 		dsd-enable-gpios = <&gpio1 RK_PD0 GPIO_ACTIVE_HIGH>;

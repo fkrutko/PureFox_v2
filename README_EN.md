@@ -99,20 +99,6 @@ The I2S menu settings are configured in the web interface (the "I2S Settings" pa
 
 Via web interface: **I2S ↔ USB** toggle
 
-### Volume Encoder
-
-An optional mechanical rotary encoder with a push button controls the master volume: each detent changes it by 1%, and a press toggles mute. The volume position is immediately reflected in the web interface.
-
-| Encoder pin      | Luckfox Pico |
-| ---------------- | ----------- |
-| A / CLK          | GPIO1_C6    |
-| B / DT           | GPIO1_C7    |
-| C / COM          | GND         |
-| SW               | GPIO1_C5    |
-| Other SW pin     | GND         |
-
-The inputs use internal pull-up resistors. Do not connect power to the encoder contacts or apply 5 V to them. If rotation direction is reversed, swap A/CLK and B/DT.
-
 ## Supported Players
 
 - NAA (HQPlayer)

@@ -1,7 +1,0 @@
-#!/bin/sh
-
-case "$1" in
-    start) /usr/sbin/volume-encoder >/dev/null 2>&1 & ;;
-    stop) killall volume-encoder 2>/dev/null ;;
-    restart) killall volume-encoder 2>/dev/null; /usr/sbin/volume-encoder >/dev/null 2>&1 & ;;
-esac

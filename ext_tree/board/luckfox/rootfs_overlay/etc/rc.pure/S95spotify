@@ -26,7 +26,7 @@ start() {
     /usr/bin/librespot \
         --cache /tmp --cache-size-limit 12M \
         --bitrate 320 \
-	--initial-volume 100 \
+        --volume-ctrl fixed \
         --name $NAME > /tmp/librespot.log 2>&1 &
     LIBRESPOT_PID=$!
     renice -15 $LIBRESPOT_PID 2>/dev/null
