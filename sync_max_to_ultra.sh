@@ -60,8 +60,9 @@ EXCLUDE_PATTERNS=(
     # Sync script itself (MAX only)
     "^sync_max_to_ultra.sh$"
 
-    # CI builds and publishes MAX releases for the online update (MAX only)
+    # MAX releases for the online update (MAX only)
     "^\.github/"
+    "^release.sh$"
 
     # Build scripts (different storage layout)
     "^build.sh$"

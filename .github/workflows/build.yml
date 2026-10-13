@@ -1,7 +1,9 @@
 name: Build PureFox
 
-# Every push to MAX_6.X (or a manual run) builds the firmware with Buildroot
-# and publishes a GitHub release:
+# Releases are normally built and published locally with ./release.sh (the
+# hosted runner is too slow). This workflow is kept for manual runs only
+# (Actions → Build PureFox → Run workflow); it builds the firmware with
+# Buildroot and publishes a GitHub release:
 #   PureFox-<build>.zip   images for RV1106_Toolkit (env, idblock, uboot, boot, rootfs)
 #   rootfs.squashfs       root filesystem for the online update (/opt/update.sh)
 #   boot.img              kernel + DTB for the online update
@@ -10,11 +12,6 @@ name: Build PureFox
 # https://github.com/fkrutko/PureFox_v2/releases/latest/download/...
 
 on:
-  push:
-    branches: [ MAX_6.X ]
-    paths-ignore:
-      - '**.md'
-      - 'images/**'
   workflow_dispatch:
 
 permissions:
@@ -37,6 +34,8 @@ jobs:
           df -h /
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the build id counts commits, as release.sh does
 
       - name: Host packages
         run: |
@@ -49,7 +48,7 @@ jobs:
         run: |
           base=$(sed -n "s/.*PUREFOX_BASE_VERSION', '\([^']*\)'.*/\1/p" \
                  ext_tree/board/luckfox/rootfs_overlay/var/www/config.php)
-          echo "build=${base:-2.8}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "build=${base:-2.8}.$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
 
       # caches are saved even if the build fails, so a re-run does not start from zero
       - name: Restore download cache
