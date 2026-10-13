@@ -28,6 +28,9 @@ sleep 0.2
 modprobe dwc3 2>/dev/null || true
 sleep 0.5
 
+# Drive 5V VBUS on the USB-C port (host mode requires it)
+/usr/bin/usb-vbus on
+
 # 4. Restart status monitor in BACKGROUND (can wait for services to stabilize)
 run_without_audio_lock_fd /etc/init.d/S40statusmonitor restart >/dev/null 2>&1 &
 sync

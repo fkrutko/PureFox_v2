@@ -1,0 +1,55 @@
+#!/bin/sh
+#
+# usb-vbus - control the 5V VBUS power switch on the USB-C port (J1).
+#
+# The switch is a SY6280AAC load switch enabled by GPIO1_C4 (LuckFox Pico MAX
+# pin 7, Linux GPIO 52). The enable line is pulled down by R170 (100k), so the
+# default state after power-up is OFF until it is explicitly enabled.
+#
+#   host mode   -> usb-vbus on    (5V must be present on the port)
+#   gadget mode -> usb-vbus off   (port must only pass GND/D+/D-)
+#
+# Usage: usb-vbus {on|off|status}
+#
+
+GPIO=52
+GPIO_DIR="/sys/class/gpio/gpio$GPIO"
+
+prepare_gpio() {
+    [ -d "$GPIO_DIR" ] || echo "$GPIO" > /sys/class/gpio/export 2>/dev/null
+    [ -d "$GPIO_DIR" ] || return 1
+    echo out > "$GPIO_DIR/direction" 2>/dev/null || true
+    return 0
+}
+
+case "$1" in
+    on)
+        if ! prepare_gpio; then
+            echo "usb-vbus: GPIO $GPIO is not available" >&2
+            exit 1
+        fi
+        echo 1 > "$GPIO_DIR/value"
+        echo "usb-vbus: 5V VBUS ON (host mode)"
+        ;;
+    off)
+        if ! prepare_gpio; then
+            echo "usb-vbus: GPIO $GPIO is not available" >&2
+            exit 1
+        fi
+        echo 0 > "$GPIO_DIR/value"
+        echo "usb-vbus: 5V VBUS OFF (gadget mode)"
+        ;;
+    status)
+        if [ -d "$GPIO_DIR" ]; then
+            echo "usb-vbus: gpio$GPIO=$(cat "$GPIO_DIR/value" 2>/dev/null || echo '?')"
+        else
+            echo "usb-vbus: gpio$GPIO not exported (switch is off by default)"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {on|off|status}" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

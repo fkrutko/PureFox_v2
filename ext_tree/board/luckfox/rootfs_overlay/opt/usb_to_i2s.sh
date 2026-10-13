@@ -28,6 +28,9 @@ echo I2S > /etc/output
 # 2. Switch USB to gadget mode
 echo "Switching USB to gadget mode..."
 
+# Cut 5V VBUS on the USB-C port (gadget mode must not drive it)
+/usr/bin/usb-vbus off
+
 rmmod dwc3 2>/dev/null || true
 sleep 0.2
 

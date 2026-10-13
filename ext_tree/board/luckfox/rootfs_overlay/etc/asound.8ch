@@ -1,6 +1,7 @@
 pcm.!default {
     type route
     slave.pcm "hw:0,0"
+    slave.channels 8
     ttable.0.0   1
     ttable.1.1   1
     ttable.2.2   1  

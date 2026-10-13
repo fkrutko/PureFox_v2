@@ -10,6 +10,9 @@ MODULES_DIR="/lib/modules"
 switch_to_gadget() {
     echo "Switching USB to gadget mode..."
     
+    # Cut 5V VBUS on the USB-C port (gadget mode must not drive it)
+    /usr/bin/usb-vbus off
+    
     # Unload host modules if loaded
     rmmod dwc3 2>/dev/null || true
     rmmod dwc3_of_simple 2>/dev/null || true
@@ -53,6 +56,9 @@ switch_to_host() {
     insmod $MODULES_DIR/dwc3_host.ko 2>/dev/null || true
     insmod $MODULES_DIR/dwc3_of_simple_host.ko 2>/dev/null || true
     sleep 0.5
+    
+    # Drive 5V VBUS on the USB-C port (host mode requires it)
+    /usr/bin/usb-vbus on
     
     echo "USB switched to host mode"
 }

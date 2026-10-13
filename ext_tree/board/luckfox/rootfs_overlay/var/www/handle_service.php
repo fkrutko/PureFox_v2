@@ -1,4 +1,6 @@
 <?php
+require_once 'audio_transition.php';
+
 header('Content-Type: application/json; charset=utf-8');
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -9,6 +11,7 @@ function logMessage($message) {
 
 function executeCommand($command) {
     logMessage("Executing: $command");
+    $command = 'PUREFOX_AUDIO_LOCK_HELD=1 ' . $command;
     $output = shell_exec("/usr/bin/sudo /bin/sh -c " . escapeshellarg($command) . " 2>&1");
     logMessage("Output: " . trim((string)$output));
     return trim((string)$output);
@@ -80,14 +83,9 @@ if (!file_exists($scriptPath)) {
     fail("Player script not found: $scriptPath");
 }
 
-$lockFile = '/tmp/player_switch.lock';
-$lockFp = fopen($lockFile, 'c');
+$lockFp = acquireAudioTransitionLock();
 if (!$lockFp) {
-    fail("Cannot open lock file");
-}
-if (!flock($lockFp, LOCK_EX | LOCK_NB)) {
-    fclose($lockFp);
-    fail("Service switch already in progress");
+    fail("Audio transition already in progress");
 }
 
 try {
@@ -125,7 +123,6 @@ try {
         'output' => $startOutput
     ]);
 } finally {
-    flock($lockFp, LOCK_UN);
-    fclose($lockFp);
+    releaseAudioTransitionLock($lockFp);
 }
 ?>

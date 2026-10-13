@@ -17,28 +17,6 @@ restore_mixer() {
     [ -n "$mixer" ] && amixer set "$mixer" unmute 2>/dev/null
 }
 
-start_qobuz_proxy() {
-    target="$(cat /tmp/qobuz_proxy_target 2>/dev/null)"
-    blocked="$(cat /tmp/qobuz_geo 2>/dev/null)"
-    [ "$blocked" = "1" ] || return 0
-    [ -n "$target" ] || return 0
-
-    proxy_host="${target%%:*}"
-    proxy_port="${target##*:}"
-    [ -n "$proxy_host" ] || return 0
-    [ -n "$proxy_port" ] || proxy_port=8443
-
-    killall rinetd tinyproxy 2>/dev/null
-    /bin/sh -c 'renice 15 $$ >/dev/null 2>&1; exec /usr/sbin/rinetd 127.0.0.1 443 "$1" "$2"' sh \
-        "$proxy_host" "$proxy_port" >/dev/null 2>&1 &
-    /bin/sh -c 'renice 15 $$ >/dev/null 2>&1; exec tinyproxy -c /etc/tinyproxy.conf' \
-        >/dev/null 2>&1 &
-}
-
-stop_qobuz_proxy() {
-    killall rinetd tinyproxy 2>/dev/null
-}
-
 start_qobuz() {
     output_device="$(get_output_device)"
 
@@ -51,7 +29,6 @@ start_qobuz() {
 
 start() {
     printf "Starting Qobuz Connect: "
-    start_qobuz_proxy
     start_qobuz > /dev/null 2>&1 &
 }
 
@@ -60,10 +37,8 @@ stop() {
 
     if [ -n "$pid" ]; then
         kill -9 "$pid"
-        stop_qobuz_proxy
         echo "Stopped qobuz-connect (PID: $pid)"
     else
-        stop_qobuz_proxy
         echo "qobuz-connect not running"
     fi
 }

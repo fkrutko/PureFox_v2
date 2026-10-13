@@ -474,6 +474,10 @@ $(document).ready(function () {
                 clearTimeout(statusRecoveryTimer);
                 statusRecoveryTimer = null;
             }
+            // USBtoI2S enable/disable restarts status_monitor, so every
+            // (re)connect is a good moment to re-read the mode state: it may
+            // have been toggled outside this page (console/STM32, another tab).
+            checkUsbToI2sStatus();
         };
         statusEvents.addEventListener('status', function(event) {
             try {
@@ -1143,7 +1147,7 @@ $(document).ready(function () {
     let lastSentVolume = null;
     let lastVolumeRequestAt = 0;
     let volumeKeyboardAdjusting = false;
-    const VOLUME_REQUEST_INTERVAL_MS = 200;
+    const VOLUME_REQUEST_INTERVAL_MS = 100;
 
     // Обновляем громкость из уже полученных данных status_fast.php (НЕ отдельный запрос!)
     function updateVolumeFromStatus(data) {
@@ -1235,11 +1239,16 @@ $(document).ready(function () {
         if (volumeReleaseTimer) {
             clearTimeout(volumeReleaseTimer);
         }
+        // The board's status pipeline (mixer poll + JSON + SSE) can lag the
+        // last command by up to ~1 s. Keep status-driven slider updates
+        // blocked until it has caught up, otherwise a stale value yanks the
+        // slider back right after the user stops scrolling and the next
+        // wheel tick continues from the wrong position.
         volumeReleaseTimer = setTimeout(() => {
             if (!volumeRequestInFlight && pendingVolume === null) {
                 isVolumeChanging = false;
             }
-        }, 250);
+        }, 1500);
     }
 
     // Send only one volume request at a time. While it is in flight, retain
@@ -1266,7 +1275,8 @@ $(document).ready(function () {
                 debugLog('Volume control disabled:', data.reason);
                 return;
             }
-            if (data.success) {
+            if (data.success && pendingVolume === null && volumeSlider &&
+                String(volume) === volumeSlider.value) {
                 volumeDisplay.textContent = volume;
             }
         })
@@ -1528,6 +1538,9 @@ $(document).ready(function () {
         // SSE delivers state changes immediately. This is only a recovery path
         // when the event connection is temporarily unavailable.
         statusInterval = setInterval(function() {
+            // Re-validate the USBtoI2S button: the mode can be toggled outside
+            // this page (serial console / STM32 controller / another browser).
+            checkUsbToI2sStatus();
             if (!statusEventsConnected) {
                 forceStatusCheck();
             }
@@ -1569,6 +1582,10 @@ $(document).ready(function () {
 
     // Check USBtoI2S status and lock toggle if enabled
     function checkUsbToI2sStatus() {
+        if (isAlsaSwitching) {
+            // This tab's own toggle is in flight; its handlers refresh the UI.
+            return;
+        }
         debugLog("checkUsbToI2sStatus called");
         $.ajax({
             url: 'usb_to_i2s.php',
@@ -1586,7 +1603,14 @@ $(document).ready(function () {
                     updateAlsaUI('i2s');
                     debugLog("After addClass:", $('#usbto-i2s-btn').attr('class'));
                 } else {
+                    const wasActive = $('#usbto-i2s-btn').hasClass('active');
                     $('#usbto-i2s-btn').removeClass('active');
+                    unlockAlsaToggle();
+                    if (wasActive) {
+                        // The mode was just turned off elsewhere (console/STM32,
+                        // another browser): refresh the rest of the UI as well.
+                        forceStatusCheck();
+                    }
                 }
             }
         });

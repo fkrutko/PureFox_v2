@@ -2,8 +2,27 @@
 
 set -eu
 
+export FORCE_UNSAFE_CONFIGURE=1
+
 usage() {
     echo "Usage: $0 [--bootstrap] [--clean]" >&2
+}
+
+cleanup_release_intermediates() {
+    images_dir=${1:?Usage: cleanup_release_intermediates <images-dir>}
+
+    for artifact in rootfs.img env.img; do
+        [ -f "$images_dir/$artifact" ] || {
+            echo "Refusing to prune artifacts: missing $images_dir/$artifact" >&2
+            return 1
+        }
+    done
+
+    rm -f \
+        "$images_dir/rootfs.ubi" \
+        "$images_dir/rootfs.ubifs" \
+        "$images_dir/uboot-env.bin" \
+        "$images_dir"/*.dtb
 }
 
 CLEAN_BUILD=0
@@ -89,9 +108,9 @@ for rebuild_target in status-monitor-rebuild volume-encoder-rebuild; do
     make O="$OUTPUT_DIR" "$rebuild_target"
 done
 
-export FORCE_UNSAFE_CONFIGURE=1
 export LIBCLANG_PATH
 export CLANG_PATH
 export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$OUTPUT_DIR/host/arm-buildroot-linux-gnueabihf/sysroot"
 
 make O="$OUTPUT_DIR"
+cleanup_release_intermediates "$OUTPUT_DIR/images"

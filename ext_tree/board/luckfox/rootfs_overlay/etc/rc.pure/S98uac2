@@ -98,9 +98,12 @@ start() {
     echo 24 > functions/uac2.usb0/fb_max
 
     # bInterval for high-speed isochronous endpoints.
-    # bInterval=1 → every microframe (125µs) → 8000 packets/sec.
-    # At DSD512 (705600 Hz, 2ch, 4B): 705600*2*4/8000 = 706 bytes/pkt — fits in 1024.
-    # Default (0=auto) calculates bInterval=4 → 1ms → only 128K fps → DSD512 starves!
+    # bInterval=1 → every microframe (125µs) → ~8700 dwc3 IRQs/sec (measured 2026-10-02).
+    # EXPERIMENT (2026-10-02): bInterval=2 halves IRQs (~4800/s) BUT requires High-Bandwidth
+    #   multi-transaction packets (>1024 B/service) for 705600/768000 rates; hosts that do not
+    #   honor HB mult bits deliver only the 788 B base size → DSD512/PCM768 starve
+    #   ("ISO OUT: partial frame 788 bytes, truncating"). Rates <=384000 are unaffected.
+    #   => keep bInterval=1 until a per-alt or rate-capped split is engineered.
     echo 1 > functions/uac2.usb0/c_hs_bint
     echo 1 > functions/uac2.usb0/p_hs_bint
 

@@ -4,10 +4,14 @@ if [ -f /etc/usb_to_i2s.state ]; then
 	# USBtoI2S mode enabled - load gadget modules
 	insmod /lib/modules/dwc3_gadget.ko
 	modprobe dwc3-of-simple
+	# Gadget mode: 5V VBUS on the USB-C port must stay off
+	/usr/bin/usb-vbus off
 else
 	# USBtoI2S mode disabled - load host modules
 	modprobe dwc3
 	modprobe dwc3-of-simple
+	# Host mode: drive 5V VBUS on the USB-C port
+	/usr/bin/usb-vbus on
 fi
 
 exit 0

@@ -1,6 +1,6 @@
 diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-rockchip-rk-6.1-rkr6.1_modify/arch/arm/boot/dts/Makefile
---- linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile	2026-08-21 16:51:34.351088719 +0300
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/arch/arm/boot/dts/Makefile	2026-08-21 16:51:34.357161485 +0300
+--- linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile	2025-07-03 12:59:45.000000000 +0200
++++ linux-rockchip-rk-6.1-rkr6.1_modify/arch/arm/boot/dts/Makefile	2025-11-22 20:03:36.598796410 +0100
 @@ -1122,159 +1122,7 @@
  	r9a06g032-rzn1d400-db.dtb \
  	sh73a0-kzm9g.dtb
@@ -1857,8 +1857,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/codecs/dummy-codec.c linux
  	.ops = &dummy_codec_dai_ops,
  };
 diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c
---- linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c	2025-07-03 12:59:45.000000000 +0200
-+++ linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c	2026-07-20 08:54:26.394165099 +0200
+--- linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.c	2026-10-02 22:00:41.210414741 +0200
++++ linux-rockchip-rk-6.1-rkr6.1_modify/sound/soc/rockchip/rockchip_i2s_tdm.c	2026-10-02 23:06:00.732993956 +0200
 @@ -1,31 +1,47 @@
 -// SPDX-License-Identifier: GPL-2.0-only
 -// ALSA SoC Audio Layer - Rockchip I2S/TDM Controller driver
@@ -1925,7 +1925,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
  #define DRV_NAME "rockchip-i2s-tdm"
  
-@@ -33,518 +49,622 @@
+@@ -33,518 +49,632 @@
  #define HAVE_SYNC_RESET
  #endif
  
@@ -2135,12 +2135,19 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    atomic_t refcount;
 +    spinlock_t lock; /* xfer lock */
 +    int volume;
++    int volume_min_db;
 +    u32 volume_gain_q31;
 +    u32 volume_gain_q15;
 +    snd_pcm_uframes_t volume_appl_ptr;
 +    bool volume_appl_ptr_valid;
 +    void *volume_shadow;
 +    size_t volume_shadow_bytes;
++    u32 volume_gain_applied_q31;    /* gain currently carried by queued PCM */
++    u32 volume_gain_applied_q15;
++    unsigned int volume_ramp_ms;    /* gain glide on queue rebuild (0=off) */
++    unsigned long volume_refresh_jiffies;   /* jiffies of last queue rebuild */
++    struct delayed_work volume_refresh_work;
++    struct mutex volume_lock;       /* serializes queued-PCM rebuilds */
 +    bool mute;
 +    struct gpio_desc *mute_gpio;
 +    struct gpio_desc *mute_inv_gpio;  /* Inverted mute signal (GPIO2_A5, pin 69) */
@@ -2181,6 +2188,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    
 +    /* ALSA control for sysfs and alsamixer synchronization */
 +    struct snd_kcontrol *mute_kcontrol;
++    struct snd_kcontrol *volume_kcontrol;
 +    struct snd_soc_dai *dai; /* For ALSA card access */
 +    
 +    /* Saved format for forced changes application */
@@ -2204,7 +2212,9 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +static void rockchip_i2s_tdm_apply_mute(struct rk_i2s_tdm_dev *i2s_tdm, bool enable);
 +static void rockchip_i2s_tdm_tx_path_config(struct rk_i2s_tdm_dev *i2s_tdm, int num);
 +static void rockchip_i2s_tdm_handle_dsd_switch(struct rk_i2s_tdm_dev *i2s_tdm, bool enable_dsd);
-+static void rockchip_i2s_tdm_refresh_queued_pcm(struct rk_i2s_tdm_dev *i2s_tdm);
++static int rockchip_i2s_tdm_refresh_queued_pcm(struct rk_i2s_tdm_dev *i2s_tdm);
++static void rockchip_i2s_tdm_volume_refresh_work(struct work_struct *work);
++static void rockchip_i2s_tdm_volume_refresh_now(struct rk_i2s_tdm_dev *i2s_tdm);
 +
 +
 +
@@ -2699,12 +2709,6 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  {
 -	if (!i2s_tdm->cru_base || !i2s_tdm->soc_data || !i2s_tdm->is_master_mode)
 -		return;
--
--	if (IS_ERR_OR_NULL(i2s_tdm->tx_reset) || IS_ERR_OR_NULL(i2s_tdm->rx_reset))
--		return;
--
--	reset_control_assert(i2s_tdm->tx_reset);
--	reset_control_assert(i2s_tdm->rx_reset);
 +    int tx_bank, rx_bank, tx_offset, rx_offset, tx_id, rx_id;
 +    void __iomem *cru_reset, *addr;
 +    unsigned long flags;
@@ -2761,6 +2765,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    break;
 +    }
  
+-	if (IS_ERR_OR_NULL(i2s_tdm->tx_reset) || IS_ERR_OR_NULL(i2s_tdm->rx_reset))
+-		return;
+-
+-	reset_control_assert(i2s_tdm->tx_reset);
+-	reset_control_assert(i2s_tdm->rx_reset);
+-
 -	/* delay for reset assert done */
 -	udelay(10);
 +    /* delay for reset assert done */
@@ -2770,6 +2780,9 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  static void rockchip_i2s_tdm_reset_deassert(struct rk_i2s_tdm_dev *i2s_tdm)
  {
 -	if (!i2s_tdm->cru_base || !i2s_tdm->soc_data || !i2s_tdm->is_master_mode)
+-		return;
+-
+-	if (IS_ERR_OR_NULL(i2s_tdm->tx_reset) || IS_ERR_OR_NULL(i2s_tdm->rx_reset))
 -		return;
 +    int tx_bank, rx_bank, tx_offset, rx_offset, tx_id, rx_id;
 +    void __iomem *cru_reset, *addr;
@@ -2826,9 +2839,6 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    break;
 +    }
  
--	if (IS_ERR_OR_NULL(i2s_tdm->tx_reset) || IS_ERR_OR_NULL(i2s_tdm->rx_reset))
--		return;
--
 -	if (i2s_tdm->soc_data && i2s_tdm->soc_data->src_clk_ctrl)
 -		i2s_tdm->soc_data->src_clk_ctrl(i2s_tdm, 0);
 -
@@ -2904,35 +2914,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  {
 -	unsigned int val = 0;
 -	int ret = 0;
-+    struct reset_control *rst = NULL;
-+    unsigned int val = 0;
-+    int ret = 0;
-+
-+    if (!i2s_tdm->is_master_mode)
-+    goto reset;
-+
-+    switch (clr) {
-+    case I2S_CLR_TXC:
-+    rst = i2s_tdm->tx_reset;
-+    break;
-+    case I2S_CLR_RXC:
-+    rst = i2s_tdm->rx_reset;
-+    break;
-+    case I2S_CLR_TXC | I2S_CLR_RXC:
-+    break;
-+    default:
-+    return -EINVAL;
-+    }
-+
-+    regmap_update_bits(i2s_tdm->regmap, I2S_CLR, clr, clr);
-+
-+    ret = regmap_read_poll_timeout_atomic(i2s_tdm->regmap, I2S_CLR, val,
-+              !(val & clr), 10, 100);
-+    if (ret < 0) {
-+    dev_warn(i2s_tdm->dev, "failed to clear %u\n", clr);
-+    goto reset;
-+    }
- 
+-
 -	regmap_update_bits(i2s_tdm->regmap, I2S_CLR, clr, clr);
 -	ret = regmap_read_poll_timeout_atomic(i2s_tdm->regmap, I2S_CLR, val,
 -					      !(val & clr), 10, 100);
@@ -2966,7 +2948,35 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -			 clr, i2s_tdm->is_master_mode ? "master" : "slave");
 -		goto reset;
 -	}
--
++    struct reset_control *rst = NULL;
++    unsigned int val = 0;
++    int ret = 0;
++
++    if (!i2s_tdm->is_master_mode)
++    goto reset;
++
++    switch (clr) {
++    case I2S_CLR_TXC:
++    rst = i2s_tdm->tx_reset;
++    break;
++    case I2S_CLR_RXC:
++    rst = i2s_tdm->rx_reset;
++    break;
++    case I2S_CLR_TXC | I2S_CLR_RXC:
++    break;
++    default:
++    return -EINVAL;
++    }
++
++    regmap_update_bits(i2s_tdm->regmap, I2S_CLR, clr, clr);
++
++    ret = regmap_read_poll_timeout_atomic(i2s_tdm->regmap, I2S_CLR, val,
++              !(val & clr), 10, 100);
++    if (ret < 0) {
++    dev_warn(i2s_tdm->dev, "failed to clear %u\n", clr);
++    goto reset;
++    }
+ 
 -	return 0;
 +    return 0;
  
@@ -2982,7 +2992,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +674,3555 @@
+@@ -554,3020 +684,3927 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -3079,23 +3089,13 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -}
 -
 -static inline int rockchip_i2s_tdm_clk_assert_h(const struct gpio_desc *desc)
--{
--	int cnt = CLK_MAX_COUNT;
--
--	while (gpiod_get_raw_value(desc) && --cnt)
--		;
--
--	return cnt;
--}
--
--static inline int rockchip_i2s_tdm_clk_assert_l(const struct gpio_desc *desc)
 +          int stream, bool en)
  {
 -	int cnt = CLK_MAX_COUNT;
 +    if (!en)
 +    rockchip_i2s_tdm_fifo_xrun_detect(i2s_tdm, stream, 0);
  
--	while (!gpiod_get_raw_value(desc) && --cnt)
+-	while (gpiod_get_raw_value(desc) && --cnt)
 -		;
 +    if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
 +    if (i2s_tdm->quirks & QUIRK_HDMI_PATH)
@@ -3125,6 +3125,16 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    rockchip_i2s_tdm_fifo_xrun_detect(i2s_tdm, stream, 1);
  }
  
+-static inline int rockchip_i2s_tdm_clk_assert_l(const struct gpio_desc *desc)
+-{
+-	int cnt = CLK_MAX_COUNT;
+-
+-	while (!gpiod_get_raw_value(desc) && --cnt)
+-		;
+-
+-	return cnt;
+-}
+-
 -static inline bool rockchip_i2s_tdm_clk_valid(struct rk_i2s_tdm_dev *i2s_tdm,
 -					      bool has_fsync)
 -{
@@ -3329,9 +3339,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -}
 -
 -static int rockchip_i2s_tdm_fsxn_stop(struct rk_i2s_tdm_dev *i2s_tdm, int stream)
-+static void rockchip_i2s_tdm_xfer_start(struct rk_i2s_tdm_dev *i2s_tdm,
-+        int stream)
- {
+-{
 -	struct gpio_desc *fsn;
 -
 -	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
@@ -3345,28 +3353,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	gpiod_set_value(fsn, 0);
 -
 -	return 0;
-+    if (i2s_tdm->clk_trcm) {
-+    rockchip_i2s_tdm_reset_assert(i2s_tdm);
-+    regmap_update_bits(i2s_tdm->regmap, I2S_XFER,
-+       I2S_XFER_TXS_MASK |
-+       I2S_XFER_RXS_MASK,
-+       I2S_XFER_TXS_START |
-+       I2S_XFER_RXS_START);
-+    rockchip_i2s_tdm_reset_deassert(i2s_tdm);
-+    } else if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
-+    regmap_update_bits(i2s_tdm->regmap, I2S_XFER,
-+       I2S_XFER_TXS_MASK,
-+       I2S_XFER_TXS_START);
-+    } else {
-+    regmap_update_bits(i2s_tdm->regmap, I2S_XFER,
-+       I2S_XFER_RXS_MASK,
-+       I2S_XFER_RXS_START);
-+    }
- }
- 
+-}
+-
 -static int rockchip_i2s_tdm_multi_lanes_start(struct rk_i2s_tdm_dev *i2s_tdm, int stream)
-+static void rockchip_i2s_tdm_xfer_stop(struct rk_i2s_tdm_dev *i2s_tdm,
-+           int stream, bool force)
++static void rockchip_i2s_tdm_xfer_start(struct rk_i2s_tdm_dev *i2s_tdm,
++        int stream)
  {
 -	unsigned int tdm_h = 0, tdm_l = 0, i2s_h = 0, i2s_l = 0;
 -	unsigned int msk, val, reg, fmt;
@@ -3397,46 +3388,27 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	fmt = I2S_XCR_IBM_V(fmt);
 -
 -	local_irq_save(flags);
-+    unsigned int msk, val, clr;
- 
+-
 -	if (!rockchip_i2s_tdm_clk_valid(i2s_tdm, 1)) {
 -		local_irq_restore(flags);
 -		dev_err(i2s_tdm->dev, "Invalid LRCK / FSYNC measured by ref IO\n");
 -		return -EINVAL;
 -	}
-+    if (i2s_tdm->quirks & QUIRK_ALWAYS_ON && !force)
-+    return;
- 
+-
 -	switch (fmt) {
 -	case I2S_XCR_IBM_NORMAL:
 -		tdm_h = rockchip_i2s_tdm_clk_assert_h(i2s_tdm->tdm_fsync_gpio);
 -		tdm_l = rockchip_i2s_tdm_clk_assert_l(i2s_tdm->tdm_fsync_gpio);
-+    if (i2s_tdm->clk_trcm) {
-+    msk = I2S_XFER_TXS_MASK | I2S_XFER_RXS_MASK;
-+    val = I2S_XFER_TXS_STOP | I2S_XFER_RXS_STOP;
-+    clr = I2S_CLR_TXC | I2S_CLR_RXC;
-+    } else if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
-+    msk = I2S_XFER_TXS_MASK;
-+    val = I2S_XFER_TXS_STOP;
-+    clr = I2S_CLR_TXC;
-+    } else {
-+    msk = I2S_XFER_RXS_MASK;
-+    val = I2S_XFER_RXS_STOP;
-+    clr = I2S_CLR_RXC;
-+    }
- 
+-
 -		if (i2s_tdm->lrck_ratio == 8) {
 -			rockchip_i2s_tdm_clk_assert_l(i2s_tdm->i2s_lrck_gpio);
 -			rockchip_i2s_tdm_clk_assert_h(i2s_tdm->i2s_lrck_gpio);
 -			rockchip_i2s_tdm_clk_assert_l(i2s_tdm->i2s_lrck_gpio);
 -			rockchip_i2s_tdm_clk_assert_h(i2s_tdm->i2s_lrck_gpio);
 -		}
-+    regmap_update_bits(i2s_tdm->regmap, I2S_XFER, msk, val);
- 
+-
 -		i2s_l = rockchip_i2s_tdm_clk_assert_l(i2s_tdm->i2s_lrck_gpio);
-+    /* delay for LRCK signal integrity */
-+    udelay(150);
- 
+-
 -		if (stream == SNDRV_PCM_STREAM_CAPTURE)
 -			i2s_h = rockchip_i2s_tdm_clk_assert_h(i2s_tdm->i2s_lrck_gpio);
 -		break;
@@ -3469,23 +3441,56 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -		CLK_MAX_COUNT - i2s_h, CLK_MAX_COUNT - i2s_l);
 -
 -	return 0;
-+    rockchip_i2s_tdm_clear(i2s_tdm, clr);
++    if (i2s_tdm->clk_trcm) {
++    rockchip_i2s_tdm_reset_assert(i2s_tdm);
++    regmap_update_bits(i2s_tdm->regmap, I2S_XFER,
++       I2S_XFER_TXS_MASK |
++       I2S_XFER_RXS_MASK,
++       I2S_XFER_TXS_START |
++       I2S_XFER_RXS_START);
++    rockchip_i2s_tdm_reset_deassert(i2s_tdm);
++    } else if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
++    regmap_update_bits(i2s_tdm->regmap, I2S_XFER,
++       I2S_XFER_TXS_MASK,
++       I2S_XFER_TXS_START);
++    } else {
++    regmap_update_bits(i2s_tdm->regmap, I2S_XFER,
++       I2S_XFER_RXS_MASK,
++       I2S_XFER_RXS_START);
++    }
  }
  
 -static int rockchip_i2s_tdm_multi_lanes_parse(struct rk_i2s_tdm_dev *i2s_tdm)
-+static void rockchip_i2s_tdm_xfer_trcm_start(struct rk_i2s_tdm_dev *i2s_tdm)
++static void rockchip_i2s_tdm_xfer_stop(struct rk_i2s_tdm_dev *i2s_tdm,
++           int stream, bool force)
  {
 -	struct device_node *clk_src_node = NULL;
 -	enum gpiod_flags gpiod_flags;
 -	unsigned int val;
 -	int ret;
--
++    unsigned int msk, val, clr;
+ 
 -	i2s_tdm->is_tdm_multi_lanes =
 -		device_property_read_bool(i2s_tdm->dev, "rockchip,tdm-multi-lanes");
--
++    if (i2s_tdm->quirks & QUIRK_ALWAYS_ON && !force)
++    return;
+ 
 -	if (!i2s_tdm->is_tdm_multi_lanes)
 -		return 0;
--
++    if (i2s_tdm->clk_trcm) {
++    msk = I2S_XFER_TXS_MASK | I2S_XFER_RXS_MASK;
++    val = I2S_XFER_TXS_STOP | I2S_XFER_RXS_STOP;
++    clr = I2S_CLR_TXC | I2S_CLR_RXC;
++    } else if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
++    msk = I2S_XFER_TXS_MASK;
++    val = I2S_XFER_TXS_STOP;
++    clr = I2S_CLR_TXC;
++    } else {
++    msk = I2S_XFER_RXS_MASK;
++    val = I2S_XFER_RXS_STOP;
++    clr = I2S_CLR_RXC;
++    }
+ 
 -	i2s_tdm->tx_lanes = 1;
 -	i2s_tdm->rx_lanes = 1;
 -
@@ -3506,8 +3511,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -		dev_err(i2s_tdm->dev, "Failed to get fsxn_rx_gpio %d\n", ret);
 -		return ret;
 -	}
-+    unsigned long flags;
- 
+-
 -	i2s_tdm->fsxn_tx_gpio = devm_gpiod_get_optional(i2s_tdm->dev, "fsxn-tx",
 -							GPIOD_OUT_LOW);
 -	if (IS_ERR(i2s_tdm->fsxn_tx_gpio)) {
@@ -3555,17 +3559,13 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	dev_info(i2s_tdm->dev, "Used as TDM_MULTI_LANES mode\n");
 -
 -	return 0;
-+    spin_lock_irqsave(&i2s_tdm->lock, flags);
-+    if (atomic_inc_return(&i2s_tdm->refcount) == 1)
-+    rockchip_i2s_tdm_xfer_start(i2s_tdm, 0);
-+    spin_unlock_irqrestore(&i2s_tdm->lock, flags);
- }
+-}
 -#endif
++    regmap_update_bits(i2s_tdm->regmap, I2S_XFER, msk, val);
  
 -static int rockchip_i2s_tdm_slave_one_frame_start(struct rk_i2s_tdm_dev *i2s_tdm,
 -						   int stream)
-+static void rockchip_i2s_tdm_xfer_trcm_stop(struct rk_i2s_tdm_dev *i2s_tdm)
- {
+-{
 -	unsigned int msk, val, h;
 -	unsigned long flags;
 -	bool sof;
@@ -3642,14 +3642,17 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -					  I2S_XFER_RXS_MASK,
 -					  I2S_XFER_TXS_START |
 -					  I2S_XFER_RXS_START);
-+    unsigned long flags;
++    /* delay for LRCK signal integrity */
++    udelay(150);
  
 -	return rockchip_i2s_tdm_xfer_with_gate(i2s_tdm);
--}
--
++    rockchip_i2s_tdm_clear(i2s_tdm, clr);
+ }
+ 
 -static void rockchip_i2s_tdm_xfer_start(struct rk_i2s_tdm_dev *i2s_tdm,
 -					int stream)
--{
++static void rockchip_i2s_tdm_xfer_trcm_start(struct rk_i2s_tdm_dev *i2s_tdm)
+ {
 -#ifdef CONFIG_SND_SOC_ROCKCHIP_I2S_TDM_MULTI_LANES
 -	if (i2s_tdm->is_tdm_multi_lanes) {
 -		if (rockchip_i2s_tdm_multi_lanes_start(i2s_tdm, stream) != -ENOSYS)
@@ -3658,7 +3661,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -#endif
 -	if (rockchip_i2s_tdm_slave_one_frame_start(i2s_tdm, stream) != -ENOSYS)
 -		return;
--
++    unsigned long flags;
+ 
 -	if (i2s_tdm->clk_trcm) {
 -		rockchip_i2s_tdm_reset_assert(i2s_tdm);
 -		rockchip_i2s_tdm_trcm_xfer(i2s_tdm);
@@ -3672,11 +3676,16 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -				   I2S_XFER_RXS_MASK,
 -				   I2S_XFER_RXS_START);
 -	}
--}
--
++    spin_lock_irqsave(&i2s_tdm->lock, flags);
++    if (atomic_inc_return(&i2s_tdm->refcount) == 1)
++    rockchip_i2s_tdm_xfer_start(i2s_tdm, 0);
++    spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ }
+ 
 -static void rockchip_i2s_tdm_xfer_stop(struct rk_i2s_tdm_dev *i2s_tdm,
 -				       int stream, bool force)
--{
++static void rockchip_i2s_tdm_xfer_trcm_stop(struct rk_i2s_tdm_dev *i2s_tdm)
+ {
 -	unsigned int msk, val, clr;
 -
 -	if (i2s_tdm->quirks & QUIRK_ALWAYS_ON && !force)
@@ -3697,7 +3706,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	}
 -
 -	regmap_update_bits(i2s_tdm->regmap, I2S_XFER, msk, val);
--
++    unsigned long flags;
+ 
 -	/* delay for LRCK signal integrity */
 -	udelay(150);
 -
@@ -5848,16 +5858,13 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 -	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
 -	unsigned int reg = 0, mode = 0;
-+    struct snd_soc_dai *dai = snd_kcontrol_chip(kcontrol);
-+    struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
-+    int ret = 0, ppm = 0;
- 
+-
 -	pm_runtime_get_sync(component->dev);
 -	regmap_read(i2s_tdm->regmap, I2S_XFER, &reg);
 -	pm_runtime_put(component->dev);
-+    if ((ucontrol->value.integer.value[0] < CLK_PPM_MIN) ||
-+        (ucontrol->value.integer.value[0] > CLK_PPM_MAX))
-+    return -EINVAL;
++    struct snd_soc_dai *dai = snd_kcontrol_chip(kcontrol);
++    struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
++    int ret = 0, ppm = 0;
  
 -	switch (reg & I2S_XFER_LP_MODE_MASK) {
 -	case I2S_XFER_LP_MODE_2_SWAP:
@@ -5873,13 +5880,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -		mode = LOOPBACK_MODE_DIS;
 -		break;
 -	}
-+    ppm = ucontrol->value.integer.value[0];
++    if ((ucontrol->value.integer.value[0] < CLK_PPM_MIN) ||
++        (ucontrol->value.integer.value[0] > CLK_PPM_MAX))
++    return -EINVAL;
  
 -	ucontrol->value.enumerated.item[0] = mode;
-+    ret = rockchip_i2s_tdm_clk_set_rate(i2s_tdm, i2s_tdm->mclk_root0,
-+            i2s_tdm->mclk_root0_freq, ppm);
-+    if (ret)
-+    return ret;
++    ppm = ucontrol->value.integer.value[0];
  
 -	return 0;
 -}
@@ -5890,14 +5896,16 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 -	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
 -	unsigned int val = 0, mode = ucontrol->value.enumerated.item[0];
-+    if (clk_is_match(i2s_tdm->mclk_root0, i2s_tdm->mclk_root1))
-+    return 0;
++    ret = rockchip_i2s_tdm_clk_set_rate(i2s_tdm, i2s_tdm->mclk_root0,
++            i2s_tdm->mclk_root0_freq, ppm);
++    if (ret)
++    return ret;
  
 -	if (mode < LOOPBACK_MODE_DIS ||
 -	    mode > LOOPBACK_MODE_2_SWAP)
 -		return -EINVAL;
-+    ret = rockchip_i2s_tdm_clk_set_rate(i2s_tdm, i2s_tdm->mclk_root1,
-+            i2s_tdm->mclk_root1_freq, ppm);
++    if (clk_is_match(i2s_tdm->mclk_root0, i2s_tdm->mclk_root1))
++    return 0;
  
 -	switch (mode) {
 -	case LOOPBACK_MODE_2_SWAP:
@@ -5913,7 +5921,9 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -		val = I2S_XFER_LP_MODE_DIS;
 -		break;
 -	}
--
++    ret = rockchip_i2s_tdm_clk_set_rate(i2s_tdm, i2s_tdm->mclk_root1,
++            i2s_tdm->mclk_root1_freq, ppm);
+ 
 -	pm_runtime_get_sync(component->dev);
 -	regmap_update_bits(i2s_tdm->regmap, I2S_XFER, I2S_XFER_LP_MODE_MASK, val);
 -	pm_runtime_put(component->dev);
@@ -5924,37 +5934,25 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
 -static const char * const rpaths_text[] = {
 -	"From SDI0", "From SDI1", "From SDI2", "From SDI3" };
-+static struct snd_kcontrol_new rockchip_i2s_tdm_compensation_control = {
-+    .iface = SNDRV_CTL_ELEM_IFACE_PCM,
-+    .name = "PCM Clk Compensation In PPM",
-+    .info = rockchip_i2s_tdm_clk_compensation_info,
-+    .get = rockchip_i2s_tdm_clk_compensation_get,
-+    .put = rockchip_i2s_tdm_clk_compensation_put,
-+};
- 
+-
 -static const char * const tpaths_text[] = {
 -	"From PATH0", "From PATH1", "From PATH2", "From PATH3" };
- 
+-
 -/* TXCR */
 -static SOC_ENUM_SINGLE_DECL(tpath3_enum, I2S_TXCR, 29, tpaths_text);
 -static SOC_ENUM_SINGLE_DECL(tpath2_enum, I2S_TXCR, 27, tpaths_text);
 -static SOC_ENUM_SINGLE_DECL(tpath1_enum, I2S_TXCR, 25, tpaths_text);
 -static SOC_ENUM_SINGLE_DECL(tpath0_enum, I2S_TXCR, 23, tpaths_text);
-+static const struct snd_kcontrol_new rockchip_i2s_tdm_snd_controls[] = {
-+};
- 
+-
 -/* RXCR */
 -static SOC_ENUM_SINGLE_DECL(rpath3_enum, I2S_RXCR, 23, rpaths_text);
 -static SOC_ENUM_SINGLE_DECL(rpath2_enum, I2S_RXCR, 21, rpaths_text);
 -static SOC_ENUM_SINGLE_DECL(rpath1_enum, I2S_RXCR, 19, rpaths_text);
 -static SOC_ENUM_SINGLE_DECL(rpath0_enum, I2S_RXCR, 17, rpaths_text);
-+/* Control structures defined after functions */
- 
+-
 -static int rockchip_i2s_tdm_wait_time_info(struct snd_kcontrol *kcontrol,
 -					   struct snd_ctl_elem_info *uinfo)
-+static int rockchip_i2s_tdm_volume_info(struct snd_kcontrol *kcontrol,
-+                                        struct snd_ctl_elem_info *uinfo)
- {
+-{
 -	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 -	uinfo->count = 1;
 -	uinfo->value.integer.min = 0;
@@ -5963,6 +5961,35 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -
 -	return 0;
 -}
++static struct snd_kcontrol_new rockchip_i2s_tdm_compensation_control = {
++    .iface = SNDRV_CTL_ELEM_IFACE_PCM,
++    .name = "PCM Clk Compensation In PPM",
++    .info = rockchip_i2s_tdm_clk_compensation_info,
++    .get = rockchip_i2s_tdm_clk_compensation_get,
++    .put = rockchip_i2s_tdm_clk_compensation_put,
++};
+ 
+-static int rockchip_i2s_tdm_rd_wait_time_get(struct snd_kcontrol *kcontrol,
+-					     struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+-	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
+ 
+-	ucontrol->value.integer.value[0] = i2s_tdm->wait_time[SNDRV_PCM_STREAM_CAPTURE];
++static const struct snd_kcontrol_new rockchip_i2s_tdm_snd_controls[] = {
++};
+ 
+-	return 0;
+-}
++/* Control structures defined after functions */
+ 
+-static int rockchip_i2s_tdm_rd_wait_time_put(struct snd_kcontrol *kcontrol,
+-					     struct snd_ctl_elem_value *ucontrol)
++static int rockchip_i2s_tdm_volume_info(struct snd_kcontrol *kcontrol,
++                                        struct snd_ctl_elem_info *uinfo)
+ {
+-	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+-	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
 +    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 +    uinfo->count = 1;
 +    uinfo->value.integer.min = 0;
@@ -6000,30 +6027,79 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +	1279174712, 1354970579, 1435257634, 1520301995, 1610385552, 1705806894,
 +	1806882307, 1913946815, 2027355294, 2147483647
 +};
- 
--static int rockchip_i2s_tdm_rd_wait_time_get(struct snd_kcontrol *kcontrol,
--					     struct snd_ctl_elem_value *ucontrol)
++#define ROCKCHIP_I2S_TDM_VOLUME_MIN_DB -120
++#define ROCKCHIP_I2S_TDM_Q31_ONE 2147483647U
++#define ROCKCHIP_I2S_TDM_GAIN_50DB_Q31 6790940U
++/* Volume-change polish: a short glide on queued-PCM rebuilds removes the
++ * gain step (zipper clicks); coalescing caps the rebuild rate during fast
++ * adjustments (held keys) at one full-queue pass per window. */
++#define ROCKCHIP_I2S_TDM_VOLUME_COALESCE_MS 50
++#define ROCKCHIP_I2S_TDM_VOLUME_RAMP_DEFAULT_MS 8
++#define ROCKCHIP_I2S_TDM_VOLUME_RAMP_MAX_MS 100
++
++static u32 rockchip_i2s_tdm_q31_multiply(u32 left, u32 right)
++{
++    return div_u64((u64)left * right + ROCKCHIP_I2S_TDM_Q31_ONE / 2,
++                   ROCKCHIP_I2S_TDM_Q31_ONE);
++}
++
++static u32 rockchip_i2s_tdm_attenuation_to_gain_q31(unsigned int attenuation_cdb)
++{
++    unsigned int half_db_steps = attenuation_cdb / 50;
++    unsigned int remainder_cdb = attenuation_cdb % 50;
++    unsigned int blocks = half_db_steps / 100;
++    unsigned int residual_steps = half_db_steps % 100;
++    u32 gain;
++    u32 next_gain;
++    unsigned int i;
++
++    gain = rockchip_i2s_tdm_log_gain_q31[100 - residual_steps];
++    if (remainder_cdb) {
++        next_gain = residual_steps == 99 ?
++                    ROCKCHIP_I2S_TDM_GAIN_50DB_Q31 :
++                    rockchip_i2s_tdm_log_gain_q31[99 - residual_steps];
++        gain -= div_u64((u64)(gain - next_gain) * remainder_cdb + 25, 50);
++    }
++
++    for (i = 0; i < blocks; i++)
++        gain = rockchip_i2s_tdm_q31_multiply(gain,
++                                              ROCKCHIP_I2S_TDM_GAIN_50DB_Q31);
++
++    return gain;
++}
++
 +static void rockchip_i2s_tdm_set_volume_gain(struct rk_i2s_tdm_dev *i2s_tdm,
 +                                              unsigned int volume)
- {
--	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
--	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
--
--	ucontrol->value.integer.value[0] = i2s_tdm->wait_time[SNDRV_PCM_STREAM_CAPTURE];
--
--	return 0;
-+    i2s_tdm->volume_gain_q31 = rockchip_i2s_tdm_log_gain_q31[volume];
++{
++    int min_db = READ_ONCE(i2s_tdm->volume_min_db);
++    unsigned int range_cdb;
++    unsigned int attenuation_cdb;
++
++    if (!volume) {
++        i2s_tdm->volume_gain_q31 = 0;
++    } else {
++        range_cdb = (unsigned int)-min_db * 100;
++        attenuation_cdb = DIV_ROUND_CLOSEST(range_cdb * (100 - volume), 99);
++        i2s_tdm->volume_gain_q31 =
++            rockchip_i2s_tdm_attenuation_to_gain_q31(attenuation_cdb);
++    }
 +    i2s_tdm->volume_gain_q15 = DIV_ROUND_CLOSEST(i2s_tdm->volume_gain_q31, 65536);
- }
- 
--static int rockchip_i2s_tdm_rd_wait_time_put(struct snd_kcontrol *kcontrol,
--					     struct snd_ctl_elem_value *ucontrol)
--{
--	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
--	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
--
--	if (ucontrol->value.integer.value[0] > WAIT_TIME_MS_MAX)
--		return -EINVAL;
++}
++
++/* Is a PCM playback stream currently consuming the queue? */
++static bool rockchip_i2s_tdm_volume_stream_running(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    struct snd_pcm_substream *substream =
++        i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK];
++
++    if (!substream || !substream->runtime || i2s_tdm->dsd_mode_active ||
++        !i2s_tdm->volume_shadow)
++        return false;
++
++    return substream->runtime->status->state == SNDRV_PCM_STATE_RUNNING &&
++           substream->runtime->buffer_size != 0;
++}
++
 +/* Basic volume setting function */
 +static int rockchip_i2s_tdm_volume_put(struct snd_kcontrol *kcontrol,
 +                                       struct snd_ctl_elem_value *ucontrol)
@@ -6041,7 +6117,28 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +
 +    i2s_tdm->volume = volume;
 +    rockchip_i2s_tdm_set_volume_gain(i2s_tdm, volume);
-+    rockchip_i2s_tdm_refresh_queued_pcm(i2s_tdm);
++
++    if (!rockchip_i2s_tdm_volume_stream_running(i2s_tdm)) {
++        /* Nothing queued: next stream starts at the new gain. */
++        WRITE_ONCE(i2s_tdm->volume_gain_applied_q31,
++                   i2s_tdm->volume_gain_q31);
++        WRITE_ONCE(i2s_tdm->volume_gain_applied_q15,
++                   i2s_tdm->volume_gain_q15);
++        cancel_delayed_work(&i2s_tdm->volume_refresh_work);
++    } else if (time_after(jiffies,
++                          READ_ONCE(i2s_tdm->volume_refresh_jiffies) +
++                          msecs_to_jiffies(ROCKCHIP_I2S_TDM_VOLUME_COALESCE_MS))) {
++        /* Leading edge of a burst: rebuild at once. */
++        cancel_delayed_work(&i2s_tdm->volume_refresh_work);
++        rockchip_i2s_tdm_volume_refresh_now(i2s_tdm);
++    } else {
++        /* Inside a burst: one coalesced rebuild when the window closes. */
++        unsigned long due = READ_ONCE(i2s_tdm->volume_refresh_jiffies) +
++                            msecs_to_jiffies(ROCKCHIP_I2S_TDM_VOLUME_COALESCE_MS);
++        unsigned long delay = time_after(due, jiffies) ? due - jiffies : 1;
++
++        mod_delayed_work(system_wq, &i2s_tdm->volume_refresh_work, delay);
++    }
 +    
 +    dev_info(i2s_tdm->dev, "Volume changed: %d%% -> %d%%\n",
 +             old_volume, volume);
@@ -6223,6 +6320,74 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    
 +    mutex_unlock(&i2s_tdm->mute_lock);
 +}
++
++/* Logarithmic volume-range sysfs interface */
++static ssize_t volume_min_db_show(struct device *dev,
++                                  struct device_attribute *attr,
++                                  char *buf)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++
++    return sprintf(buf, "%d\n", READ_ONCE(i2s_tdm->volume_min_db));
++}
++
++static ssize_t volume_min_db_store(struct device *dev,
++                                   struct device_attribute *attr,
++                                   const char *buf, size_t count)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++    int min_db;
++
++    if (kstrtoint(buf, 0, &min_db) ||
++        min_db < ROCKCHIP_I2S_TDM_VOLUME_MIN_DB || min_db > 0)
++        return -EINVAL;
++
++    WRITE_ONCE(i2s_tdm->volume_min_db, min_db);
++    rockchip_i2s_tdm_set_volume_gain(i2s_tdm, i2s_tdm->volume);
++    rockchip_i2s_tdm_volume_refresh_now(i2s_tdm);
++
++    if (i2s_tdm->volume_kcontrol && i2s_tdm->dai &&
++        i2s_tdm->dai->component) {
++        snd_ctl_notify(i2s_tdm->dai->component->card->snd_card,
++                       SNDRV_CTL_EVENT_MASK_VALUE,
++                       &i2s_tdm->volume_kcontrol->id);
++    }
++
++    dev_info(dev, "Logarithmic volume range set to %d dB..0 dB\n", min_db);
++    return count;
++}
++
++static DEVICE_ATTR(volume_min_db, 0644, volume_min_db_show,
++                   volume_min_db_store);
++
++/* Gain glide length for queued-PCM rebuilds, in milliseconds. */
++static ssize_t volume_ramp_ms_show(struct device *dev,
++                                   struct device_attribute *attr,
++                                   char *buf)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++
++    return sprintf(buf, "%u\n", READ_ONCE(i2s_tdm->volume_ramp_ms));
++}
++
++static ssize_t volume_ramp_ms_store(struct device *dev,
++                                    struct device_attribute *attr,
++                                    const char *buf, size_t count)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++    unsigned int ms;
++
++    if (kstrtouint(buf, 0, &ms) ||
++        ms > ROCKCHIP_I2S_TDM_VOLUME_RAMP_MAX_MS)
++        return -EINVAL;
++
++    WRITE_ONCE(i2s_tdm->volume_ramp_ms, ms);
++    dev_info(dev, "Volume gain glide set to %u ms\n", ms);
++    return count;
++}
++
++static DEVICE_ATTR(volume_ramp_ms, 0644, volume_ramp_ms_show,
++                   volume_ramp_ms_store);
 +
 +/* MCLK multiplier sysfs interface */
 +static ssize_t mclk_multiplier_show(struct device *dev,
@@ -6586,7 +6751,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    .put = rockchip_i2s_tdm_volume_put,
 +};
  
--	i2s_tdm->wait_time[SNDRV_PCM_STREAM_CAPTURE] = ucontrol->value.integer.value[0];
+-	if (ucontrol->value.integer.value[0] > WAIT_TIME_MS_MAX)
+-		return -EINVAL;
 +static struct snd_kcontrol_new rockchip_i2s_tdm_mute_control = {
 +    .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 +    .name = "PCM Playback Switch",
@@ -6595,17 +6761,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    .put = rockchip_i2s_tdm_mute_put,
 +};
  
+-	i2s_tdm->wait_time[SNDRV_PCM_STREAM_CAPTURE] = ucontrol->value.integer.value[0];
+ 
 -	return 1;
 -}
- 
--static int rockchip_i2s_tdm_wr_wait_time_get(struct snd_kcontrol *kcontrol,
--					     struct snd_ctl_elem_value *ucontrol)
--{
--	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
--	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
 +static void rockchip_i2s_tdm_process_pcm(struct rk_i2s_tdm_dev *i2s_tdm,
 +                                          struct snd_pcm_runtime *runtime,
-+                                          void *dma_area, size_t bytes);
++                                          void *dma_area, size_t bytes,
++                                          u32 gain_q31, s32 gain_q15);
 +
 +/* PCM copy callback for audio data processing */
 +static int rockchip_i2s_tdm_pcm_copy_user(struct snd_soc_component *component,
@@ -6667,14 +6830,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            goto skip_dsd_processing;
 +        }
 +
-+        /* PLAYBACK: copy from user and process */
++        /* PLAYBACK: copy raw samples only. The gain is applied once in
++         * rockchip_i2s_tdm_pcm_ack() (shared by writei and mmap paths), which
++         * also refreshes the shadow ring; doing both here doubled attenuation. */
 +        if (copy_from_user(dma_area, buf, bytes))
 +            return -EFAULT;
 +
-+        if (!i2s_tdm->dsd_mode_active && i2s_tdm->volume_shadow &&
-+            pos + bytes <= i2s_tdm->volume_shadow_bytes)
-+            memcpy((u8 *)i2s_tdm->volume_shadow + pos, dma_area, bytes);
-+        
 +        /* DSD MUTE: Replace data with silence signal (50% duty cycle) */
 +        if ((i2s_tdm->mute || i2s_tdm->auto_mute_active) && i2s_tdm->dsd_mode_active &&
 +            (substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U32_LE || 
@@ -6695,10 +6856,6 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            /* During mute do not apply sample swap - send clean silence signal */
 +            goto skip_dsd_processing;
 +        }
-+
-+        if (!i2s_tdm->dsd_mode_active)
-+            rockchip_i2s_tdm_process_pcm(i2s_tdm, substream->runtime,
-+                                          dma_area, bytes);
 +
 +        /* CRITICAL FIX FOR DSD: Swap upper and lower 16 bits */
 +        if (i2s_tdm->dsd_sample_swap && i2s_tdm->dsd_mode_active &&
@@ -6739,7 +6896,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +
 +static void rockchip_i2s_tdm_process_pcm(struct rk_i2s_tdm_dev *i2s_tdm,
 +                                          struct snd_pcm_runtime *runtime,
-+                                          void *dma_area, size_t bytes)
++                                          void *dma_area, size_t bytes,
++                                          u32 gain_q31, s32 gain_q15)
 +{
 +    int i;
 +
@@ -6748,13 +6906,13 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        return;
 +    }
 +
-+    if (i2s_tdm->volume >= 100)
++    if (gain_q31 >= ROCKCHIP_I2S_TDM_Q31_ONE)
 +        return;
 +
 +    if (runtime->format == SNDRV_PCM_FORMAT_S16_LE) {
 +        s16 *samples = dma_area;
 +        int num_samples = bytes / sizeof(*samples);
-+        s32 gain = i2s_tdm->volume_gain_q15;
++        s32 gain = gain_q15;
 +
 +        for (i = 0; i < num_samples; i++) {
 +            s32 scaled = samples[i] * gain;
@@ -6766,7 +6924,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +               runtime->format == SNDRV_PCM_FORMAT_S32_LE) {
 +        s32 *samples = dma_area;
 +        int num_samples = bytes / sizeof(*samples);
-+        u32 gain = i2s_tdm->volume_gain_q31;
++        u32 gain = gain_q31;
 +
 +        for (i = 0; i < num_samples; i++) {
 +            s64 scaled = (s64)samples[i] * gain;
@@ -6777,7 +6935,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    } else if (runtime->format == SNDRV_PCM_FORMAT_S24_3LE) {
 +        u8 *data = dma_area;
 +        int num_samples = bytes / 3;
-+        u32 gain = i2s_tdm->volume_gain_q31;
++        u32 gain = gain_q31;
 +
 +        for (i = 0; i < num_samples; i++) {
 +            int sample_offset = i * 3;
@@ -6816,6 +6974,9 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        }
 +        i2s_tdm->volume_appl_ptr = substream->runtime->control->appl_ptr;
 +        i2s_tdm->volume_appl_ptr_valid = true;
++        i2s_tdm->volume_gain_applied_q31 = i2s_tdm->volume_gain_q31;
++        i2s_tdm->volume_gain_applied_q15 = i2s_tdm->volume_gain_q15;
++        cancel_delayed_work(&i2s_tdm->volume_refresh_work);
 +    }
 +
 +    return 0;
@@ -6858,7 +7019,9 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +                   frames_to_bytes(runtime, chunk));
 +        rockchip_i2s_tdm_process_pcm(i2s_tdm, runtime,
 +            runtime->dma_area + frames_to_bytes(runtime, offset),
-+            frames_to_bytes(runtime, chunk));
++            frames_to_bytes(runtime, chunk),
++            READ_ONCE(i2s_tdm->volume_gain_applied_q31),
++            (s32)READ_ONCE(i2s_tdm->volume_gain_applied_q15));
 +        i2s_tdm->volume_appl_ptr += chunk;
 +        if (i2s_tdm->volume_appl_ptr >= runtime->boundary)
 +            i2s_tdm->volume_appl_ptr -= runtime->boundary;
@@ -6868,21 +7031,160 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    return 0;
 +}
 +
-+/* Rebuild not-yet-transmitted PCM from the unmodified shadow ring buffer. */
-+static void rockchip_i2s_tdm_refresh_queued_pcm(struct rk_i2s_tdm_dev *i2s_tdm)
++/* Gain glide state for one queued-PCM rebuild pass. */
++struct rockchip_i2s_tdm_gain_glide {
++    s64 acc31;      /* current gain, Q31 scale */
++    s64 acc15;      /* current gain, Q15 scale */
++    s64 step31;     /* per-frame increment during the glide */
++    s64 step15;
++    s64 target31;   /* final gain for the pass */
++    s64 target15;
++    s64 left;       /* frames left in the glide (0 = plain target gain) */
++};
+ 
+-static int rockchip_i2s_tdm_wr_wait_time_get(struct snd_kcontrol *kcontrol,
+-					     struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+-	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
++/* Rebuild one contiguous chunk: copy raw samples from the shadow ring into
++ * the DMA area while advancing the gain glide exactly once per frame. */
++static void rockchip_i2s_tdm_rebuild_chunk(struct rk_i2s_tdm_dev *i2s_tdm,
++                                           struct snd_pcm_runtime *runtime,
++                                           const void *src, void *dst,
++                                           size_t bytes,
++                                           struct rockchip_i2s_tdm_gain_glide *g)
++{
++    unsigned int channels = runtime->channels ? runtime->channels : 1;
++    int i;
++
++    if (i2s_tdm->mute || i2s_tdm->auto_mute_active) {
++        memset(dst, 0, bytes);
++        return;
++    }
++
++    if (g->acc31 >= ROCKCHIP_I2S_TDM_Q31_ONE && g->left <= 0) {
++        memcpy(dst, src, bytes);    /* full scale: bit-exact passthrough */
++        return;
++    }
++
++    if (runtime->format == SNDRV_PCM_FORMAT_S16_LE) {
++        const s16 *in = src;
++        s16 *out = dst;
++        int num_samples = bytes / sizeof(*in);
++        s64 acc = g->acc15, step = g->step15, left = g->left;
++        s64 target = g->target15;
++
++        for (i = 0; i < num_samples; ) {
++            s32 gain = (s32)acc;
++            unsigned int c;
++
++            for (c = 0; c < channels && i < num_samples; c++, i++) {
++                s32 scaled = in[i] * gain;
++
++                scaled += scaled >= 0 ? (1 << 14) : -(1 << 14);
++                out[i] = clamp_t(s32, scaled >> 15, S16_MIN, S16_MAX);
++            }
++            if (left > 0) {
++                if (--left == 0)
++                    acc = target;
++                else
++                    acc += step;
++            }
++        }
++        g->acc15 = acc;
++        g->left = left;
++    } else if (runtime->format == SNDRV_PCM_FORMAT_S24_LE ||
++               runtime->format == SNDRV_PCM_FORMAT_S32_LE) {
++        const s32 *in = src;
++        s32 *out = dst;
++        int num_samples = bytes / sizeof(*in);
++        s64 acc = g->acc31, step = g->step31, left = g->left;
++        s64 target = g->target31;
++
++        for (i = 0; i < num_samples; ) {
++            u32 gain = (u32)acc;
++            unsigned int c;
++
++            for (c = 0; c < channels && i < num_samples; c++, i++) {
++                s64 scaled = (s64)in[i] * gain;
++
++                scaled += scaled >= 0 ? (1LL << 30) : -(1LL << 30);
++                out[i] = clamp_t(s64, scaled >> 31, S32_MIN, S32_MAX);
++            }
++            if (left > 0) {
++                if (--left == 0)
++                    acc = target;
++                else
++                    acc += step;
++            }
++        }
++        g->acc31 = acc;
++        g->left = left;
++    } else if (runtime->format == SNDRV_PCM_FORMAT_S24_3LE) {
++        const u8 *in = src;
++        u8 *out = dst;
++        int num_samples = bytes / 3;
++        s64 acc = g->acc31, step = g->step31, left = g->left;
++        s64 target = g->target31;
++
++        for (i = 0; i < num_samples; ) {
++            u32 gain = (u32)acc;
++            unsigned int c;
++
++            for (c = 0; c < channels && i < num_samples; c++, i++) {
++                int off = i * 3;
++                s32 sample = in[off] | (in[off + 1] << 8) |
++                             (in[off + 2] << 16);
++
++                if (sample & 0x800000)
++                    sample |= 0xFF000000;
++                {
++                    s64 scaled = (s64)sample * gain;
++
++                    scaled += scaled >= 0 ? (1LL << 30) : -(1LL << 30);
++                    sample = (s32)(scaled >> 31);
++                }
++                out[off] = sample & 0xFF;
++                out[off + 1] = (sample >> 8) & 0xFF;
++                out[off + 2] = (sample >> 16) & 0xFF;
++            }
++            if (left > 0) {
++                if (--left == 0)
++                    acc = target;
++                else
++                    acc += step;
++            }
++        }
++        g->acc31 = acc;
++        g->left = left;
++    } else {
++        memcpy(dst, src, bytes);
++    }
++}
++
++/* Rebuild not-yet-transmitted PCM from the unmodified shadow ring buffer.
++ * Called with volume_lock held. The gain glides from the value currently
++ * carried by the queue up to the new target over the first volume_ramp_ms
++ * of frames, so a volume step never hits the stream as a hard
++ * discontinuity. Returns 1 when the stream was live and the caller may
++ * publish the new gain as applied. */
++static int rockchip_i2s_tdm_refresh_queued_pcm(struct rk_i2s_tdm_dev *i2s_tdm)
 +{
 +    struct snd_pcm_substream *substream;
 +    struct snd_pcm_runtime *runtime;
 +    snd_pcm_uframes_t appl_ptr, hw_ptr, frames, offset, chunk, guard;
++    struct rockchip_i2s_tdm_gain_glide g = { };
++    u64 ramp_frames;
 +
 +    substream = i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK];
 +    if (!substream || i2s_tdm->dsd_mode_active || !i2s_tdm->volume_shadow)
-+        return;
++        return 0;
 +
 +    runtime = substream->runtime;
 +    if (!runtime || runtime->status->state != SNDRV_PCM_STATE_RUNNING ||
 +        !runtime->buffer_size)
-+        return;
++        return 0;
 +
 +    appl_ptr = READ_ONCE(runtime->control->appl_ptr);
 +    hw_ptr = READ_ONCE(runtime->status->hw_ptr);
@@ -6891,24 +7193,73 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    else
 +        frames = runtime->boundary - hw_ptr + appl_ptr;
 +    if (frames > runtime->buffer_size)
-+        return;
++        return 0;
 +
 +    /* Leave two periods alone: DMA may already be consuming the current one. */
 +    guard = min(frames, runtime->period_size * 2);
 +    frames -= guard;
 +    offset = (hw_ptr + guard) % runtime->buffer_size;
 +
++    g.acc31 = READ_ONCE(i2s_tdm->volume_gain_applied_q31);
++    g.acc15 = READ_ONCE(i2s_tdm->volume_gain_applied_q15);
++    g.target31 = i2s_tdm->volume_gain_q31;
++    g.target15 = i2s_tdm->volume_gain_q15;
++
++    if (!frames)
++        return 1;
++
++    ramp_frames = div_u64((u64)READ_ONCE(i2s_tdm->volume_ramp_ms) *
++                          runtime->rate, 1000);
++    if (!ramp_frames || g.acc31 == g.target31) {
++        /* Glide disabled or already at target: apply the target directly. */
++        g.acc31 = g.target31;
++        g.acc15 = g.target15;
++        g.left = 0;
++    } else {
++        if (ramp_frames > frames)
++            ramp_frames = frames;
++        g.left = ramp_frames;
++        g.step31 = div_s64(g.target31 - g.acc31, (s32)ramp_frames);
++        g.step15 = div_s64(g.target15 - g.acc15, (s32)ramp_frames);
++    }
++
 +    while (frames) {
 +        chunk = min(frames, runtime->buffer_size - offset);
-+        memcpy(runtime->dma_area + frames_to_bytes(runtime, offset),
-+               (u8 *)i2s_tdm->volume_shadow + frames_to_bytes(runtime, offset),
-+               frames_to_bytes(runtime, chunk));
-+        rockchip_i2s_tdm_process_pcm(i2s_tdm, runtime,
++        rockchip_i2s_tdm_rebuild_chunk(i2s_tdm, runtime,
++            (const u8 *)i2s_tdm->volume_shadow + frames_to_bytes(runtime, offset),
 +            runtime->dma_area + frames_to_bytes(runtime, offset),
-+            frames_to_bytes(runtime, chunk));
++            frames_to_bytes(runtime, chunk), &g);
 +        offset = (offset + chunk) % runtime->buffer_size;
 +        frames -= chunk;
 +    }
++
++    return 1;
++}
++
++/* Rebuild the queue now (serialized) and publish the new applied gain. */
++static void rockchip_i2s_tdm_volume_refresh_now(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    int ran;
++
++    mutex_lock(&i2s_tdm->volume_lock);
++    ran = rockchip_i2s_tdm_refresh_queued_pcm(i2s_tdm);
++    if (ran) {
++        WRITE_ONCE(i2s_tdm->volume_gain_applied_q31,
++                   i2s_tdm->volume_gain_q31);
++        WRITE_ONCE(i2s_tdm->volume_gain_applied_q15,
++                   i2s_tdm->volume_gain_q15);
++        i2s_tdm->volume_refresh_jiffies = jiffies;
++    }
++    mutex_unlock(&i2s_tdm->volume_lock);
++}
++
++/* Trailing edge of a volume burst: one coalesced rebuild. */
++static void rockchip_i2s_tdm_volume_refresh_work(struct work_struct *work)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm =
++        container_of(work, struct rk_i2s_tdm_dev, volume_refresh_work.work);
++
++    rockchip_i2s_tdm_volume_refresh_now(i2s_tdm);
 +}
 +
 +/* All explicitly supported rates: standard PCM, ultra-high PCM (to 768kHz), and DSD native.
@@ -7092,6 +7443,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        dev_err(i2s_tdm->dev, "Failed to add volume control: %d\n", ret);
 +    else
 +        dev_info(i2s_tdm->dev, "Basic volume control added (no processing)\n");
++    if (!ret) {
++        i2s_tdm->volume_kcontrol = snd_soc_card_get_kcontrol(
++            dai->component->card, rockchip_i2s_tdm_volume_control.name);
++        i2s_tdm->dai = dai;
++    }
 +
 +    ret = snd_soc_add_dai_controls(dai, &rockchip_i2s_tdm_mute_control, 1);
 +    if (ret)
@@ -7233,7 +7589,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +          struct snd_soc_dai *dai)
  {
 -	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
--
++    struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
+ 
 -	if (!rockchip_i2s_tdm_stream_valid(substream, dai))
 -		return;
 -
@@ -7246,8 +7603,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -
 -	if (i2s_tdm->resume_deferred_ms)
 -		msleep(i2s_tdm->resume_deferred_ms);
-+    struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
- 
+-
 -	dev_dbg(component->dev, "%s: resume deferred %d ms\n",
 -		__func__, i2s_tdm->resume_deferred_ms);
 -
@@ -7867,13 +8223,13 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  {
 -	int idx;
 +    int idx;
-+
  
 -	for (idx = 0; idx < num; idx++) {
 -		regmap_update_bits(i2s_tdm->regmap, I2S_TXCR,
 -				   I2S_TXCR_PATH_MASK(idx),
 -				   I2S_TXCR_PATH(idx, i2s_tdm->i2s_sdos[idx]));
 -	}
++
 +    for (idx = 0; idx < num; idx++) {
 +    regmap_update_bits(i2s_tdm->regmap, I2S_TXCR,
 +       I2S_TXCR_PATH_MASK(idx),
@@ -7902,7 +8258,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
  static void rockchip_i2s_tdm_path_config(struct rk_i2s_tdm_dev *i2s_tdm,
 -					 int num, bool is_rx_path)
--{
++         int num, bool is_rx_path)
+ {
 -	if (is_rx_path)
 -		rockchip_i2s_tdm_rx_path_config(i2s_tdm, num);
 -	else
@@ -7939,8 +8296,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -}
 -
 -static int rockchip_i2s_tdm_wait_time_init(struct rk_i2s_tdm_dev *i2s_tdm)
-+         int num, bool is_rx_path)
- {
+-{
 -	unsigned int wait_time;
 -
 -	if (!device_property_read_u32(i2s_tdm->dev, "rockchip,i2s-tx-wait-time-ms", &wait_time)) {
@@ -8165,6 +8521,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	/* assign generic freq */
 -	clk_set_rate(i2s_tdm->mclk_rx, mclk_rate);
 -	clk_set_rate(i2s_tdm->mclk_tx, mclk_rate);
+-
+-	ret = rockchip_i2s_tdm_mclk_reparent(i2s_tdm);
+-	if (ret)
+-		return ret;
 +    struct rk_i2s_tdm_dev *i2s_tdm = (struct rk_i2s_tdm_dev *)devid;
 +    struct snd_pcm_substream *substream;
 +    u32 val;
@@ -8189,10 +8549,6 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        /* Don't stop capture stream for external clock sync mode */
 +    }
  
--	ret = rockchip_i2s_tdm_mclk_reparent(i2s_tdm);
--	if (ret)
--		return ret;
--
 -	regmap_update_bits(i2s_tdm->regmap, I2S_CLKDIV,
 -			   I2S_CLKDIV_RXM_MASK | I2S_CLKDIV_TXM_MASK,
 -			   I2S_CLKDIV_RXM(div_bclk) | I2S_CLKDIV_TXM(div_bclk));
@@ -8246,12 +8602,20 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +
 +    i2s_tdm->dev = &pdev->dev;
 +    i2s_tdm->volume = 100;
++    i2s_tdm->volume_min_db = -50;
 +    rockchip_i2s_tdm_set_volume_gain(i2s_tdm, i2s_tdm->volume);
++    i2s_tdm->volume_gain_applied_q31 = i2s_tdm->volume_gain_q31;
++    i2s_tdm->volume_gain_applied_q15 = i2s_tdm->volume_gain_q15;
++    /* Seed the rebuild stamp: a zero-initialized jiffies value looks
++     * like a future time before the first 32-bit jiffies wrap, which
++     * would turn every leading-edge refresh into a coalesced one. */
++    i2s_tdm->volume_refresh_jiffies = jiffies;
 +    /* Initial mute state = true (muted on boot) */
 +    i2s_tdm->mute = true; 
 +    
 +    /* Initialize ALSA control pointers */
 +    i2s_tdm->mute_kcontrol = NULL;
++    i2s_tdm->volume_kcontrol = NULL;
 +    i2s_tdm->dai = NULL;
 +    
 +    /* Initialize MCLK multiplier - 512 by default */
@@ -8262,6 +8626,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    i2s_tdm->user_mute_priority = false;
 +    mutex_init(&i2s_tdm->mute_lock);
 +    INIT_DELAYED_WORK(&i2s_tdm->mute_post_work, rockchip_i2s_tdm_mute_post_work);
++    mutex_init(&i2s_tdm->volume_lock);
++    INIT_DELAYED_WORK(&i2s_tdm->volume_refresh_work,
++                      rockchip_i2s_tdm_volume_refresh_work);
++    i2s_tdm->volume_ramp_ms = ROCKCHIP_I2S_TDM_VOLUME_RAMP_DEFAULT_MS;
 +    
 +    /* Initialize pause state */
 +    i2s_tdm->playback_paused = false;
@@ -8638,6 +9006,20 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    return ret;
 +    }
 +
++    /* Create sysfs attribute for the logarithmic volume range */
++    ret = device_create_file(&pdev->dev, &dev_attr_volume_min_db);
++    if (ret) {
++        dev_err(&pdev->dev, "Failed to create volume_min_db sysfs attribute: %d\n", ret);
++        /* Not critical, continue */
++    }
++
++    /* Create sysfs attribute for the volume gain glide length */
++    ret = device_create_file(&pdev->dev, &dev_attr_volume_ramp_ms);
++    if (ret) {
++        dev_err(&pdev->dev, "Failed to create volume_ramp_ms sysfs attribute: %d\n", ret);
++        /* Not critical, continue */
++    }
++
 +    /* Create sysfs attribute for MCLK multiplier switching */
 +    ret = device_create_file(&pdev->dev, &dev_attr_mclk_multiplier);
 +    if (ret) {
@@ -8723,16 +9105,20 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -		rockchip_trcm_dma_guard_ctrl(i2s_tdm, 0, 0);
 -		rockchip_trcm_dma_guard_ctrl(i2s_tdm, 1, 0);
 -	}
-+    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(&pdev->dev);
- 
+-
 -	regcache_cache_only(i2s_tdm->regmap, true);
 -	i2s_tdm_disable_unprepare_mclk(i2s_tdm);
-+    /* Cleanup auto-mute timer */
-+    cancel_delayed_work_sync(&i2s_tdm->mute_post_work);
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(&pdev->dev);
  
 -	clk_disable_unprepare(i2s_tdm->hclk);
++    /* Cleanup auto-mute timer and pending volume rebuild */
++    cancel_delayed_work_sync(&i2s_tdm->mute_post_work);
++    cancel_delayed_work_sync(&i2s_tdm->volume_refresh_work);
++
 +    /* Remove sysfs attributes */
 +    device_remove_file(&pdev->dev, &dev_attr_mclk_multiplier);
++    device_remove_file(&pdev->dev, &dev_attr_volume_min_db);
++    device_remove_file(&pdev->dev, &dev_attr_volume_ramp_ms);
 +    device_remove_file(&pdev->dev, &dev_attr_dsd_sample_swap);
 +    device_remove_file(&pdev->dev, &dev_attr_pcm_channel_swap);
 +    device_remove_file(&pdev->dev, &dev_attr_dsd_physical_swap);
