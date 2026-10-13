@@ -40,16 +40,13 @@
                     <img src="assets/img/settings.svg" class="settings-icon" alt="I2S Settings">
                 </a>
             </div>
-            <!-- Linux kernel toggle: 6.1 | 5.10 (shown when the image has 5.10) -->
+            <!-- Linux kernel: 6.1 | 5.10 | 5.10 with the PureFox 1.6 driver (shown when the image has more than 6.1) -->
             <div class="kernel-select" id="kernel-select">
-                <span class="kernel-caption">Linux</span>
-                <div class="toggle-switch">
-                    <input type="checkbox" id="kernel-toggle" class="toggle-input">
-                    <label for="kernel-toggle" class="toggle-label">
-                        <span class="toggle-option left">6.1</span>
-                        <span class="toggle-slider"></span>
-                        <span class="toggle-option right">5.10</span>
-                    </label>
+                <span class="kernel-caption" data-lang="kernel_caption">Kernel</span>
+                <div class="kernel-options">
+                    <button type="button" class="kernel-option" data-kernel="6.1">6.1</button>
+                    <button type="button" class="kernel-option" data-kernel="5.10">5.10</button>
+                    <button type="button" class="kernel-option" data-kernel="1.6">5.10 (old drv)</button>
                 </div>
             </div>
         </div>

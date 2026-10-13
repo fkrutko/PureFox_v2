@@ -111,7 +111,9 @@ $(document).ready(function () {
             'switching_kernel': 'Переключение ядра и перезагрузка...',
             'kernel_error': 'Не удалось переключить ядро',
             'kernel_usb_to_i2s': 'USB to I2S работает только с ядром 6.1. Сначала выключите USB to I2S.',
-            'usb_to_i2s_kernel': 'USB to I2S работает только с ядром Linux 6.1'
+            'usb_to_i2s_kernel': 'USB to I2S работает только с ядром Linux 6.1',
+            'kernel_caption': 'Ядро',
+            'kernel_pf16': '5.10 с драйвером I2S из PureFox 1.6'
         },
         'en': {
             'alsa_output': 'ALSA Output:',
@@ -164,7 +166,9 @@ $(document).ready(function () {
             'switching_kernel': 'Switching kernel and rebooting...',
             'kernel_error': 'Kernel switch failed',
             'kernel_usb_to_i2s': 'USB to I2S works only with kernel 6.1. Turn USB to I2S off first.',
-            'usb_to_i2s_kernel': 'USB to I2S works only with Linux kernel 6.1'
+            'usb_to_i2s_kernel': 'USB to I2S works only with Linux kernel 6.1',
+            'kernel_caption': 'Kernel',
+            'kernel_pf16': '5.10 with the PureFox 1.6 I2S driver'
         },
         'de': {
             'alsa_output': 'ALSA Ausgang:',
@@ -217,7 +221,9 @@ $(document).ready(function () {
             'switching_kernel': 'Kernel wird gewechselt, Neustart...',
             'kernel_error': 'Kernelwechsel fehlgeschlagen',
             'kernel_usb_to_i2s': 'USB to I2S funktioniert nur mit Kernel 6.1. Schalten Sie USB to I2S zuerst aus.',
-            'usb_to_i2s_kernel': 'USB to I2S funktioniert nur mit Linux-Kernel 6.1'
+            'usb_to_i2s_kernel': 'USB to I2S funktioniert nur mit Linux-Kernel 6.1',
+            'kernel_caption': 'Kernel',
+            'kernel_pf16': '5.10 mit dem I2S-Treiber von PureFox 1.6'
         },
         'fr': {
             'alsa_output': 'Sortie ALSA:',
@@ -270,7 +276,9 @@ $(document).ready(function () {
             'switching_kernel': 'Changement de noyau et redémarrage...',
             'kernel_error': 'Échec du changement de noyau',
             'kernel_usb_to_i2s': 'USB to I2S ne fonctionne qu\'avec le noyau 6.1. Désactivez d\'abord USB to I2S.',
-            'usb_to_i2s_kernel': 'USB to I2S ne fonctionne qu\'avec le noyau Linux 6.1'
+            'usb_to_i2s_kernel': 'USB to I2S ne fonctionne qu\'avec le noyau Linux 6.1',
+            'kernel_caption': 'Noyau',
+            'kernel_pf16': '5.10 avec le pilote I2S de PureFox 1.6'
         },
         'zh': {
             'alsa_output': 'ALSA 输出:',
@@ -323,7 +331,9 @@ $(document).ready(function () {
             'switching_kernel': '正在切换内核并重启...',
             'kernel_error': '切换内核失败',
             'kernel_usb_to_i2s': 'USB to I2S 仅支持 6.1 内核。请先关闭 USB to I2S。',
-            'usb_to_i2s_kernel': 'USB to I2S 仅支持 Linux 6.1 内核'
+            'usb_to_i2s_kernel': 'USB to I2S 仅支持 Linux 6.1 内核',
+            'kernel_caption': '内核',
+            'kernel_pf16': '5.10，使用 PureFox 1.6 的 I2S 驱动'
         }
     };
 
@@ -1129,7 +1139,16 @@ $(document).ready(function () {
         });
     });
 
-    // Linux kernel 6.1 / 5.10 (kernel.php, /opt/kernel.sh)
+    // Linux kernel 6.1 / 5.10 / 1.6 (kernel.php, /opt/kernel.sh)
+    function kernelName(kernel) {
+        return kernel === '1.6' ? translations[currentLang]['kernel_pf16'] : kernel;
+    }
+
+    function showKernel(kernel) {
+        $('.kernel-option').removeClass('active')
+            .filter('[data-kernel="' + kernel + '"]').addClass('active');
+    }
+
     function loadKernelStatus() {
         $.ajax({
             url: 'kernel.php',
@@ -1137,31 +1156,38 @@ $(document).ready(function () {
             dataType: 'json',
             cache: false,
             success: function(st) {
-                $('#kernel-toggle').prop('checked', st.selected === '5.10');
-                $('#kernel-select').toggleClass('available', st.available || st.selected === '5.10');
+                $('.kernel-option').each(function() {
+                    const kernel = $(this).data('kernel').toString();
+                    $(this).prop('hidden', st.available.indexOf(kernel) < 0 && kernel !== st.selected);
+                });
+                $('.kernel-option[data-kernel="1.6"]').attr('title', translations[currentLang]['kernel_pf16']);
+                showKernel(st.selected);
+                $('#kernel-select').toggleClass('available', st.available.length > 1 || st.selected !== '6.1');
                 // the USBtoI2S gadget needs the 6.1 kernel
-                $('#usbto-i2s-btn').prop('disabled', st.running === '5.10')
-                    .attr('title', st.running === '5.10' ? translations[currentLang]['usb_to_i2s_kernel'] : null);
+                $('#usbto-i2s-btn').prop('disabled', st.running !== '6.1')
+                    .attr('title', st.running !== '6.1' ? translations[currentLang]['usb_to_i2s_kernel'] : null);
             }
         });
     }
     loadKernelStatus();
 
-    $('#kernel-toggle').change(function() {
-        const input = $(this);
-        const target = input.prop('checked') ? '5.10' : '6.1';
-        const restore = function() { input.prop('checked', target !== '5.10'); };
+    $('.kernel-option').click(function() {
+        const button = $(this);
+        const target = button.data('kernel').toString();
+        if (button.hasClass('active')) {
+            return;
+        }
+        const previous = $('.kernel-option.active').data('kernel');
 
-        if (target === '5.10' && $('#usbto-i2s-btn').hasClass('active')) {
-            restore();
+        if (target !== '6.1' && $('#usbto-i2s-btn').hasClass('active')) {
             customAlert(translations[currentLang]['kernel_usb_to_i2s']);
             return;
         }
-        customConfirm(translations[currentLang]['confirm_kernel'].replace('%s', target), function(confirmed) {
+        customConfirm(translations[currentLang]['confirm_kernel'].replace('%s', kernelName(target)), function(confirmed) {
             if (!confirmed) {
-                restore();
                 return;
             }
+            showKernel(target);
             showSpinner(translations[currentLang]['switching_kernel']);
             $.ajax({
                 url: 'kernel.php',
@@ -1174,7 +1200,7 @@ $(document).ready(function () {
                 },
                 error: function(xhr) {
                     hideSpinner();
-                    restore();
+                    showKernel(String(previous));
                     const detail = (xhr.responseJSON && xhr.responseJSON.message) || '';
                     customAlert(translations[currentLang]['kernel_error'] +
                         (detail ? '<br>' + $('<div>').text(detail).html().replace(/\n/g, '<br>') : ''));

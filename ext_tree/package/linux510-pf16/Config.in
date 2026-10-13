@@ -1,0 +1,7 @@
+config BR2_PACKAGE_LINUX510_PF16
+	bool "linux510-pf16"
+	depends on BR2_PACKAGE_LINUX510
+	help
+	  Third kernel choice: Linux 5.10 with the I2S driver and
+	  device trees of PureFox 1.6. Installed to /data/boot/1.6
+	  and selected on the device with /opt/kernel.sh 1.6.

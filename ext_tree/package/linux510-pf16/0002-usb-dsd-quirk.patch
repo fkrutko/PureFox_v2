@@ -1,0 +1,15 @@
+Keep USB DSD quirks in line with 6.1
+
+Adds the Comture vendor id to the generic native-DSD quirk, as the 6.1
+patch does with QUIRK_FLAG_DSD_RAW.
+
+--- a/sound/usb/quirks.c
++++ b/sound/usb/quirks.c
+@@ -1821,6 +1821,7 @@
+ 	case 0x292b:  /* Gustard/Ess based devices */
+ 	case 0x2972:  /* FiiO devices */
+ 	case 0x2ab6:  /* T+A devices */
++	case 0x2fc6:  /* Comture-inc devices */
+ 	case 0x3353:  /* Khadas devices */
+ 	case 0x3842:  /* EVGA */
+ 	case 0xc502:  /* HiBy devices */

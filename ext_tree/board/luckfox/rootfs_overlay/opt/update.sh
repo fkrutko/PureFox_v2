@@ -13,7 +13,8 @@
 #   3. loop-mount rootfs.squashfs and rsync it over / (each file is replaced
 #      atomically by rename; user settings are kept, see KEEP_* below)
 #   4. flash the selected kernel only if it changed (6.1: the kernel part of
-#      boot.img; 5.10, see /opt/kernel.sh: the new /data/boot/5.10/zImage),
+#      boot.img; 5.10 or 1.6, see /opt/kernel.sh: the new
+#      /data/boot/<kernel>/zImage),
 #      then put back the DTB of that kernel for the current I2S mode
 #      (PLL / EXT 1024 / EXT 512)
 #   5. reboot
@@ -164,19 +165,20 @@ sync
 
 # ---- kernel ----
 KERNEL=$(cat /etc/kernel 2>/dev/null)
-if [ "$KERNEL" = 5.10 ] && [ ! -f /data/boot/5.10/zImage ]; then
-    log "This release has no kernel 5.10, switching to 6.1."
+case "$KERNEL" in 5.10|1.6) ;; *) KERNEL=6.1 ;; esac
+if [ "$KERNEL" != 6.1 ] && [ ! -f "/data/boot/$KERNEL/zImage" ]; then
+    log "This release has no kernel $KERNEL, switching to 6.1."
     rm -f /etc/kernel
     KERNEL=6.1
 fi
-if [ "$KERNEL" = 5.10 ]; then
-    KDIR=/data/boot/5.10
+if [ "$KERNEL" != 6.1 ]; then
+    KDIR=/data/boot/$KERNEL
     size=$(wc -c < "$KDIR/zImage")
     dd if="$BOOT_MTD" bs=65536 count=$(((size + 65535) / 65536)) 2>/dev/null | head -c "$size" > "$WORK/cur_kernel"
     if cmp -s "$WORK/cur_kernel" "$KDIR/zImage"; then
-        log "Kernel 5.10 unchanged."
+        log "Kernel $KERNEL unchanged."
     else
-        log "Writing the new kernel 5.10... Do not power off!"
+        log "Writing the new kernel $KERNEL... Do not power off!"
         erase_size=$(cat /sys/class/mtd/mtd3/erasesize)
         flash_erase "$BOOT_MTD" 0 $((DTB_OFFSET / erase_size)) >/dev/null || fail "flash_erase boot: reflash the firmware with RV1106_Toolkit"
         nandwrite -p -q "$BOOT_MTD" "$KDIR/zImage" || fail "kernel write: reflash the firmware with RV1106_Toolkit"

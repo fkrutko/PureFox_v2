@@ -5,10 +5,12 @@
 #   /opt/kernel.sh          print the running and the selected kernel
 #   /opt/kernel.sh 6.1      boot kernel 6.1 (default)
 #   /opt/kernel.sh 5.10     boot kernel 5.10 (the kernel of PureFox 1.x)
+#   /opt/kernel.sh 1.6      boot kernel 5.10 with the I2S driver and DTBs of
+#                           PureFox 1.6
 #
 # Writes the kernel and the DTB of the current I2S mode from /data/boot/<kernel>/
 # to the boot partition, reads them back and keeps the choice in /etc/kernel.
-# The new kernel starts after a reboot. Both kernels run the same I2S driver.
+# The new kernel starts after a reboot. 6.1 and 5.10 run the same I2S driver.
 
 . /opt/boot-flash.sh
 
@@ -17,13 +19,13 @@ case "$1" in
         echo "Running:  $(uname -r)"
         echo "Selected: $(boot_kernel)"
         exit 0 ;;
-    6.1|5.10) KERNEL=$1 ;;
+    6.1|5.10|1.6) KERNEL=$1 ;;
     *)
-        echo "Usage: $0 [6.1|5.10]" >&2
+        echo "Usage: $0 [6.1|5.10|1.6]" >&2
         exit 2 ;;
 esac
 
-if [ "$KERNEL" = 5.10 ] && [ -f /etc/usb_to_i2s.state ]; then
+if [ "$KERNEL" != 6.1 ] && [ -f /etc/usb_to_i2s.state ]; then
     echo "ERROR: USB to I2S works only with kernel 6.1. Turn it off first."
     exit 1
 fi

@@ -4,16 +4,18 @@
 # mode scripts.
 #
 # Boot partition (mtd3, 4 MiB): kernel zImage at 0, DTB at 0x3C0000.
-# /data/boot/<kernel>/ holds zImage and the DTBs of each kernel (6.1, 5.10);
+# /data/boot/<kernel>/ holds zImage and the DTBs of each kernel choice: 6.1,
+# 5.10, 1.6 (5.10 with the PureFox 1.6 I2S driver);
 # /etc/kernel names the selected kernel (no file: 6.1).
 
 BOOT_MTD=/dev/mtd3
 DTB_OFFSET=3932160          # 0x3C0000, as in post-build.sh and U-Boot bootcmd
 
 boot_kernel() {
-    case "$(cat /etc/kernel 2>/dev/null)" in
-        5.10) echo 5.10 ;;
-        *)    echo 6.1 ;;
+    kernel=$(cat /etc/kernel 2>/dev/null)
+    case "$kernel" in
+        5.10|1.6) echo "$kernel" ;;
+        *)        echo 6.1 ;;
     esac
 }
 
