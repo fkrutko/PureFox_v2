@@ -493,7 +493,7 @@ h1 {
   flex-shrink: 0;
 }
 
-/* Segmented control: tabs, kernel and the Low noise settings */
+/* Segmented control: tabs, kernel and the Tweaks settings */
 .seg {
   display: flex;
   flex-shrink: 0;
@@ -546,12 +546,19 @@ h1 {
   display: none;
 }
 
-/* Low noise tab */
+/* Tweaks tab */
 .ln-warning {
   margin: 4px 0 0;
   font-size: 16px;
   font-weight: bold;
   color: #ff4444;
+}
+
+.ln-kernel-info {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.35;
+  color: #e0e0e0;
 }
 
 .ln-intro {

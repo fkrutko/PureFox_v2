@@ -115,8 +115,11 @@ $(document).ready(function () {
             'kernel_caption': 'Ядро',
             'kernel_pf16': '5.10 с драйвером I2S из PureFox 1.6',
             'tab_player': 'Плеер',
-            'tab_lownoise': 'Низкий шум',
+            'tab_tweaks': 'Твики',
             'ln_experimental': 'Экспериментальный раздел: используйте на свой страх и риск.',
+            'kernel_info_6.1': 'Ядро 6.1. Работает: DSD до DSD1024 по I2S, USB to I2S. Процессор по умолчанию на 1104 МГц.',
+            'kernel_info_5.10': 'Ядро 5.10. Работает: DSD до DSD1024 по I2S, вывод на USB ЦАП. Не работает: USB to I2S (USB-порт только хост). Процессор по умолчанию на 1608 МГц.',
+            'kernel_info_1.6': 'Ядро 5.10 со старым драйвером I2S из PureFox 1.6. Работает: DSD до DSD512 по I2S, вывод на USB ЦАП. Не работает: DSD1024, USB to I2S (USB-порт только хост). Процессор по умолчанию на 1608 МГц.',
             'ln_intro': 'Эти настройки не меняют аудиоданные. Сравнивайте на слух, по одной.',
             'ln_kernel_hint': 'Ядро записывается во флеш-память, затем перезагрузка. По умолчанию: 6.1.',
             'ln_cpu': 'Частота процессора',
@@ -192,8 +195,11 @@ $(document).ready(function () {
             'kernel_caption': 'Kernel',
             'kernel_pf16': '5.10 with the PureFox 1.6 I2S driver',
             'tab_player': 'Player',
-            'tab_lownoise': 'Low noise',
+            'tab_tweaks': 'Tweaks',
             'ln_experimental': 'Experimental: use at your own risk.',
+            'kernel_info_6.1': 'Kernel 6.1. Works: DSD up to DSD1024 over I2S, USB to I2S. The CPU runs at 1104 MHz by default.',
+            'kernel_info_5.10': 'Kernel 5.10. Works: DSD up to DSD1024 over I2S, output to a USB DAC. Does not work: USB to I2S (the USB port is host only). The CPU runs at 1608 MHz by default.',
+            'kernel_info_1.6': 'Kernel 5.10 with the old PureFox 1.6 I2S driver. Works: DSD up to DSD512 over I2S, output to a USB DAC. Does not work: DSD1024, USB to I2S (the USB port is host only). The CPU runs at 1608 MHz by default.',
             'ln_intro': 'These settings do not change the audio data. Compare them by ear, one at a time.',
             'ln_kernel_hint': 'Writes the kernel to flash and reboots. Default: 6.1.',
             'ln_cpu': 'CPU frequency',
@@ -269,8 +275,11 @@ $(document).ready(function () {
             'kernel_caption': 'Kernel',
             'kernel_pf16': '5.10 mit dem I2S-Treiber von PureFox 1.6',
             'tab_player': 'Player',
-            'tab_lownoise': 'Rauscharm',
+            'tab_tweaks': 'Tweaks',
             'ln_experimental': 'Experimentell: Nutzung auf eigene Gefahr.',
+            'kernel_info_6.1': 'Kernel 6.1. Funktioniert: DSD bis DSD1024 über I2S, USB to I2S. Die CPU läuft standardmäßig mit 1104 MHz.',
+            'kernel_info_5.10': 'Kernel 5.10. Funktioniert: DSD bis DSD1024 über I2S, Ausgabe an einen USB-DAC. Funktioniert nicht: USB to I2S (der USB-Port ist nur Host). Die CPU läuft standardmäßig mit 1608 MHz.',
+            'kernel_info_1.6': 'Kernel 5.10 mit dem alten I2S-Treiber von PureFox 1.6. Funktioniert: DSD bis DSD512 über I2S, Ausgabe an einen USB-DAC. Funktioniert nicht: DSD1024, USB to I2S (der USB-Port ist nur Host). Die CPU läuft standardmäßig mit 1608 MHz.',
             'ln_intro': 'Diese Einstellungen ändern die Audiodaten nicht. Vergleichen Sie nach Gehör, eine nach der anderen.',
             'ln_kernel_hint': 'Schreibt den Kernel in den Flash und startet neu. Standard: 6.1.',
             'ln_cpu': 'CPU-Takt',
@@ -346,8 +355,11 @@ $(document).ready(function () {
             'kernel_caption': 'Noyau',
             'kernel_pf16': '5.10 avec le pilote I2S de PureFox 1.6',
             'tab_player': 'Lecteur',
-            'tab_lownoise': 'Faible bruit',
+            'tab_tweaks': 'Réglages',
             'ln_experimental': 'Expérimental : à utiliser à vos propres risques.',
+            'kernel_info_6.1': 'Noyau 6.1. Fonctionne : DSD jusqu\'à DSD1024 en I2S, USB to I2S. Le processeur tourne par défaut à 1104 MHz.',
+            'kernel_info_5.10': 'Noyau 5.10. Fonctionne : DSD jusqu\'à DSD1024 en I2S, sortie vers un DAC USB. Ne fonctionne pas : USB to I2S (le port USB est uniquement hôte). Le processeur tourne par défaut à 1608 MHz.',
+            'kernel_info_1.6': 'Noyau 5.10 avec l\'ancien pilote I2S de PureFox 1.6. Fonctionne : DSD jusqu\'à DSD512 en I2S, sortie vers un DAC USB. Ne fonctionne pas : DSD1024, USB to I2S (le port USB est uniquement hôte). Le processeur tourne par défaut à 1608 MHz.',
             'ln_intro': 'Ces réglages ne modifient pas les données audio. Comparez-les à l\'oreille, un par un.',
             'ln_kernel_hint': 'Écrit le noyau en mémoire flash et redémarre. Par défaut : 6.1.',
             'ln_cpu': 'Fréquence du processeur',
@@ -423,8 +435,11 @@ $(document).ready(function () {
             'kernel_caption': '内核',
             'kernel_pf16': '5.10，使用 PureFox 1.6 的 I2S 驱动',
             'tab_player': '播放器',
-            'tab_lownoise': '低噪声',
+            'tab_tweaks': '调校',
             'ln_experimental': '实验性功能：使用风险自负。',
+            'kernel_info_6.1': '内核 6.1。可用：I2S 输出最高 DSD1024，USB to I2S。CPU 默认运行在 1104 MHz。',
+            'kernel_info_5.10': '内核 5.10。可用：I2S 输出最高 DSD1024，输出到 USB DAC。不可用：USB to I2S（USB 口仅作主机）。CPU 默认运行在 1608 MHz。',
+            'kernel_info_1.6': '内核 5.10，使用 PureFox 1.6 的旧 I2S 驱动。可用：I2S 输出最高 DSD512，输出到 USB DAC。不可用：DSD1024，USB to I2S（USB 口仅作主机）。CPU 默认运行在 1608 MHz。',
             'ln_intro': '这些设置不会改变音频数据。请逐项用耳朵比较。',
             'ln_kernel_hint': '将内核写入闪存并重启。默认：6.1。',
             'ln_cpu': 'CPU 频率',
@@ -1272,6 +1287,8 @@ $(document).ready(function () {
                 });
                 $('.kernel-option[data-kernel="1.6"]').attr('title', translations[currentLang]['kernel_pf16']);
                 showKernel(st.selected);
+                $('#ln-kernel-info').text(translations[currentLang]['kernel_info_' + st.selected] || '')
+                    .prop('hidden', false);
                 $('#kernel-row').prop('hidden', !(st.available.length > 1 || st.selected !== '6.1'));
                 // the USBtoI2S gadget needs the 6.1 kernel
                 $('#usbto-i2s-btn').prop('disabled', st.running !== '6.1')
@@ -1319,12 +1336,12 @@ $(document).ready(function () {
         });
     });
 
-    // Tabs: Player | Low noise; the open tab is remembered in this browser
+    // Tabs: Player | Tweaks; the open tab is remembered in this browser
     function showTab(tab) {
         $('.tab-btn').removeClass('active').filter('[data-tab="' + tab + '"]').addClass('active');
         $('.tab-panel').prop('hidden', true);
         $('#tab-' + tab).prop('hidden', false);
-        if (tab === 'lownoise') {
+        if (tab === 'tweaks') {
             loadLowNoise();
         }
     }

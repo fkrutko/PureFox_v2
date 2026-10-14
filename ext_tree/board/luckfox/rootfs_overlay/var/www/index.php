@@ -9,10 +9,10 @@
 </head>
 <body>
     <div class="container">
-        <!-- Tabs: Player | Low noise -->
+        <!-- Tabs: Player | Tweaks -->
         <div class="tabs seg" role="tablist">
             <button type="button" class="seg-option tab-btn active" role="tab" data-tab="player" data-lang="tab_player">Player</button>
-            <button type="button" class="seg-option tab-btn" role="tab" data-tab="lownoise" data-lang="tab_lownoise">Low noise</button>
+            <button type="button" class="seg-option tab-btn" role="tab" data-tab="tweaks" data-lang="tab_tweaks">Tweaks</button>
         </div>
 
         <div class="tab-panel" id="tab-player">
@@ -50,9 +50,11 @@
         </div>
         </div>
 
-        <!-- Low noise: settings that do not change the audio data (lownoise.php, /opt/lownoise.sh) -->
-        <div class="tab-panel" id="tab-lownoise" hidden>
+        <!-- Tweaks: the kernel and settings that do not change the audio data (lownoise.php, /opt/lownoise.sh) -->
+        <div class="tab-panel" id="tab-tweaks" hidden>
             <h3 class="ln-warning" data-lang="ln_experimental">Experimental: use at your own risk.</h3>
+            <!-- what works with the selected kernel, filled by loadKernelStatus() -->
+            <p class="ln-kernel-info" id="ln-kernel-info" hidden></p>
             <p class="ln-intro" data-lang="ln_intro">These settings do not change the audio data. Compare them by ear, one at a time.</p>
 
             <!-- Linux kernel: 6.1 | 5.10 | 5.10 with the PureFox 1.6 driver (shown when the image has more than 6.1) -->
