@@ -1,0 +1,4 @@
+# The board runs these files as they are: shell scripts with Windows line
+# endings fail with "not found". Keep LF in every checkout, Windows included;
+# binaries are detected and left alone.
+* text=auto eol=lf
