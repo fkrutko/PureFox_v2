@@ -1377,6 +1377,8 @@ $(document).ready(function () {
             }
             drive.val(s[drive.data('key')]);
         });
+        // MCLK is an input in EXT mode, its drive has no effect
+        $('#ln-mclk-drive').prop('disabled', st.i2s_mode === 'ext');
 
         $('.ln-option').each(function() {
             const key = $(this).data('key');

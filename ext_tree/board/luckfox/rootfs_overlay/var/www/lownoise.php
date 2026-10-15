@@ -7,6 +7,7 @@ header('Content-Type: application/json');
 const LOWNOISE_CONF = '/etc/lownoise.conf';
 const CPUFREQ = '/sys/devices/system/cpu/cpu0/cpufreq';
 const DMA_PARAM = '/sys/module/snd_soc_rockchip_i2s_tdm/parameters/periods_min';
+const I2S_CONF = '/etc/i2s.conf';
 const DEFAULTS = [
     'CPU_MAX_FREQ' => '0',
     'I2S_DRIVE' => 'default',
@@ -29,6 +30,12 @@ function sysfs($path) {
     return trim((string) @file_get_contents($path));
 }
 
+// PLL or EXT; EXT when unset, as in handle_i2s.php
+function i2sMode() {
+    $conf = (string) @file_get_contents(I2S_CONF);
+    return preg_match('/^MODE=(pll)\b/mi', $conf) ? 'pll' : 'ext';
+}
+
 function lownoiseStatus() {
     $frequencies = array_values(array_filter(preg_split('/\s+/', sysfs(CPUFREQ . '/scaling_available_frequencies'))));
     return [
@@ -38,6 +45,7 @@ function lownoiseStatus() {
             'current' => (int) sysfs(CPUFREQ . '/scaling_cur_freq'),
         ],
         'dma_supported' => file_exists(DMA_PARAM),
+        'i2s_mode' => i2sMode(),
     ];
 }
 

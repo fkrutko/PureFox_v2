@@ -123,7 +123,7 @@
         <div class="power-controls">
             <button id="update-firmware" class="btn-custom danger firmware-btn">
                 <div class="firmware-text">
-                    <div class="firmware-title">PureFox v<?php echo VERSION; ?></div>
+                    <div class="firmware-title">PureFox v<?php echo VERSION; ?>f</div>
                     <div class="firmware-subtitle">for LuckFox Pico MAX</div>
                 </div>
                 <img src="assets/img/firmware.svg" class="settings-icon firmware-icon" alt="Firmware">

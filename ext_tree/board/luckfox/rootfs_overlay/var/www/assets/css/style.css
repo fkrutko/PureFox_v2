@@ -609,10 +609,14 @@ h1 {
   cursor: pointer;
 }
 
-.ln-select:disabled,
 .ln-row.busy .seg-option {
   opacity: 0.6;
   cursor: progress;
+}
+
+.ln-select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 @media (max-width: 480px) {
