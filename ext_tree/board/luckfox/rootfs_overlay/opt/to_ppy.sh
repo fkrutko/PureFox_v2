@@ -7,7 +7,7 @@
 #   2. flash env, idblock, U-Boot and boot from the /data/*.img it brings
 #   3. reboot
 # After that the device updates from ppy2 only; to come back to this fork
-# flash its image with RV1106_Toolkit.
+# download this fork's update.sh over SSH and run it (see the README).
 
 SERVER="luckfox@luckfox.puredsd.ru::luckfox2"
 export RSYNC_PASSWORD=luckfox    # upstream's public password

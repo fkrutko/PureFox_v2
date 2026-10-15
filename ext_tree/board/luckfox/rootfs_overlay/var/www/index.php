@@ -122,7 +122,7 @@
             <div class="ln-row">
                 <div class="ln-text">
                     <div class="ln-title" data-lang="ln_ppy">Back to ppy</div>
-                    <div class="ln-hint" data-lang="ln_ppy_hint">Replaces this firmware with the latest upstream build of ppy2 and reboots. Settings return to its defaults. To come back, flash this firmware over USB.</div>
+                    <div class="ln-hint" data-lang="ln_ppy_hint">Replaces this firmware with the latest upstream build of ppy2 and reboots. Settings return to its defaults. To come back, run the command from the README over SSH.</div>
                 </div>
                 <button type="button" class="ln-button" id="to-ppy" data-lang="ln_ppy_button">Back to ppy</button>
             </div>

@@ -75,7 +75,13 @@ From the shell: `/opt/lownoise.sh set KEY VALUE`, see the script for the keys.
 
 - **Releases on GitHub.** Firmware builds are published as [GitHub releases](https://github.com/fkrutko/PureFox_v2/releases) of this repository, numbered `2.8.<commit count>` (e.g. 2.8.166).
 - **Online update from GitHub.** The version button in the web interface downloads the latest release over HTTPS with certificate verification (curl), checks its SHA-256 checksums and installs it over the running system, keeping user settings (output, I2S settings, Scream settings, password, …). The selected kernel is flashed, and only when it changed; the kernel choice is kept. The update no longer pulls files from luckfox.puredsd.ru.
-- **Back to ppy.** The **Back to ppy** button at the bottom of the [Tweaks](#tweaks-tab) tab replaces this firmware with the latest upstream build of ppy2, the way its own online update does (`/opt/to_ppy.sh`: rsync from luckfox.puredsd.ru, then the boot partitions are flashed), and reboots. Settings return to upstream defaults; the selected player is kept (Scream becomes APScream). To come back to this fork, flash its image over USB.
+- **Back to ppy.** The **Back to ppy** button at the bottom of the [Tweaks](#tweaks-tab) tab replaces this firmware with the latest upstream build of ppy2, the way its own online update does (`/opt/to_ppy.sh`: rsync from luckfox.puredsd.ru, then the boot partitions are flashed), and reboots. Settings return to upstream defaults; the selected player is kept (Scream becomes APScream). To come back to this fork, log in over SSH (`root` / `purefox`) and run:
+
+  ```
+  wget -O /opt/update.sh https://raw.githubusercontent.com/fkrutko/PureFox_v2/MAX_6.X/ext_tree/board/luckfox/rootfs_overlay/opt/update.sh && chmod 755 /opt/update.sh && /opt/update.sh
+  ```
+
+  This downloads this fork's online update script and installs the latest release (upstream has no curl, so this first download does not verify the server certificate). Do not copy `update.sh` from Windows: Windows line endings make the shell report it as not found. U-Boot stays the one from upstream, which works.
 
 ### Building
 
