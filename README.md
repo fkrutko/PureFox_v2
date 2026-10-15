@@ -27,7 +27,7 @@ PureFox — прошивка для плат **Luckfox Pico** **Max** и **Ultra
 
 ## Изменения в этом форке
 
-**Протестировано только подключение по I2S в режиме PLL с КШ2, а также в режиме EXT с Holo Audio Cyan 2**
+**Протестировано подключение по USB к Holo Audio Cyan 2 и по I2S в режиме PLL с КШ2, а также в режиме EXT с Holo Audio Cyan 2. Плееры Scream и APScream на всех версия ядра линукс**
 
 По сравнению с исходным проектом [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2):
 
