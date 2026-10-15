@@ -43,6 +43,7 @@ KEEP_IF_PRESENT="
 /etc/resolv.conf
 /data/ethaddr.txt
 /etc/scream_receiver.conf
+/usr/apscream/config.txt
 /etc/kernel
 "
 # Created on the device only, never shipped in the image.

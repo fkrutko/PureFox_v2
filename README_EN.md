@@ -2,7 +2,7 @@
 
 **Network audio endpoint on Luckfox Pico Max / Ultra with external clock support**
 
-> This is a fork of [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2) (`MAX_6.X` branch). It keeps only the NAA and Scream players, makes the output bit-perfect and lets you choose the Linux kernel: 6.1 or 5.10. A [Tweaks](#tweaks-tab) tab of the web page sets the CPU frequency, I2S pin drive and DMA periods. See [Changes in this fork](#changes-in-this-fork).
+> This is a fork of [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2) (`MAX_6.X` branch). It keeps only the NAA, Scream and APScream players, makes the output bit-perfect and lets you choose the Linux kernel: 6.1 or 5.10. A [Tweaks](#tweaks-tab) tab of the web page sets the CPU frequency, I2S pin drive and DMA periods. See [Changes in this fork](#changes-in-this-fork).
 
 
 ## About
@@ -66,8 +66,9 @@ From the shell: `/opt/lownoise.sh set KEY VALUE`, see the script for the keys.
 
 ### Players
 
-- **Only NAA (HQPlayer) and Scream remain.** Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli, APlayer, APrender, Spotify Connect, Qobuz Connect, Tidal Connect and CelMusper are removed, together with the libraries only they used. The root filesystem image shrank from about 39 MB to 20 MB (about 30 MB with the three kernels of the [kernel choice](#linux-kernel)).
-- **Scream instead of APScream.** The closed-source APScream receiver is replaced by the open-source [Scream](https://github.com/duncanthrax/scream) 3.6 receiver (ALSA output). It needs the standard Scream driver on Windows; APScream's ASIO sender in AP or TCP mode is not supported. The settings page sets the mode (multicast/unicast), multicast group, port, network interface, latency and ALSA device. Scream may let ALSA resample a rate the I2S output does not take; the **Scream resampling** switch on the [Tweaks](#tweaks-tab) tab turns that off.
+- **Only NAA (HQPlayer), Scream and APScream remain.** Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli, APlayer, APrender, Spotify Connect, Qobuz Connect, Tidal Connect and CelMusper are removed, together with the libraries only they used. The root filesystem image shrank from about 39 MB to 20 MB (about 30 MB with the three kernels of the [kernel choice](#linux-kernel)).
+- **Scream next to APScream.** Besides the closed-source APScream receiver there is the open-source [Scream](https://github.com/duncanthrax/scream) 3.6 receiver (ALSA output). It needs the standard Scream driver on Windows; it does not take APScream's ASIO sender in AP or TCP mode. The settings page sets the mode (multicast/unicast), multicast group, port, network interface, latency and ALSA device. Scream may let ALSA resample a rate the I2S output does not take; the **Scream resampling** switch on the [Tweaks](#tweaks-tab) tab turns that off.
+- **APScream** is the latest (2.9) [Album Player](https://albumplayer.ru) receiver for the asioscream ASIO driver (native DSD, UDP or TCP, port 4011). Its settings page sets every `config.txt` parameter: AP, TCP and MMAP modes, port, ALSA buffer, preload, latency, CPU core and process priority.
 - **NAA**: newer `networkaudiod`; the name shown in HQPlayer is unique per board (hostname plus the last six hex digits of the MAC address).
 - **The selected player survives a power cut**: the choice is written to flash as soon as it is made.
 
@@ -171,6 +172,7 @@ Via web interface: **I2S ↔ USB** toggle
 
 - NAA (HQPlayer)
 - Scream (Windows network sound card)
+- APScream (ASIO, native DSD)
 
 ## Repository Branches
 

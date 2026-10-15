@@ -1,0 +1,8 @@
+config BR2_PACKAGE_APSCREAM
+	bool "apscream"
+	help
+	  APScream, the Album Player Scream receiver (closed source,
+	  ARM32 binary). Receives the ASIO Scream driver for Windows
+	  over UDP or TCP unicast, with native DSD in AP mode.
+
+	  https://albumplayer.ru/english.html

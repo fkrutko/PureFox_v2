@@ -197,6 +197,7 @@ void get_active_service(char* service, pid_t *pid) {
     const char* services[][2] = {
         {"networkaudiod", "naa"},
         {"scream", "scream"},
+        {"apscream", "apscream"},
         {NULL, NULL}
     };
     

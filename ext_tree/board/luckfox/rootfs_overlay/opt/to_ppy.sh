@@ -47,7 +47,7 @@ rsync -ac --timeout=120 --delete-before --one-file-system \
     --filter='protect /var/www/radio.json' \
     "$SERVER" / || fail "rsync failed: the system may be partly replaced, run it again (ssh: /tmp/to_ppy.sh)"
 
-# the player link is kept: this fork's Scream is APScream upstream
+# the player link is kept: ppy2 has APScream but not this fork's Scream
 for link in /etc/init.d/S95*; do
     [ -L "$link" ] || continue
     target=$(readlink "$link")

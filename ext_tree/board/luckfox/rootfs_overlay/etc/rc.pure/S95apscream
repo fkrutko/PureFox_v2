@@ -1,1 +1,33 @@
-S95scream
+#!/bin/sh
+# APScream reads config.txt from its own folder (apscream_settings.php)
+
+start() {
+    touch /var/log/apscream.log
+    ln -s -f /var/log/apscream.log /usr/apscream/apscream.log
+    printf "Starting APScream: "
+    # it returns once it has gone to the background
+    cd /usr/apscream && ./apscream > /dev/null 2>&1
+    sleep 0.5
+    pidof apscream >/dev/null && echo "OK" || echo "FAIL"
+    if [ -f /tmp/mixer_control_cache ]; then
+        MIXER=$(cat /tmp/mixer_control_cache | cut -d, -f1 | tr -d "'")
+        [ -n "$MIXER" ] && amixer set "$MIXER" unmute 2>/dev/null
+    fi
+}
+stop() {
+    killall -9 apscream 2>/dev/null
+}
+restart() {
+	stop
+	start
+}
+case "$1" in
+  start|stop|restart)
+	"$1"
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?

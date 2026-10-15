@@ -45,6 +45,7 @@ function waitForProcess($process, $timeoutMs = 1000) {
 $players = [
     'naa'        => ['process' => 'networkaudiod',   'script' => 'S95naa'],
     'scream'     => ['process' => 'scream',          'script' => 'S95scream'],
+    'apscream'   => ['process' => 'apscream',        'script' => 'S95apscream'],
 ];
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -77,7 +78,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'scream']);
+    stopProcessGroup(['networkaudiod', 'scream', 'apscream']);
 
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');
