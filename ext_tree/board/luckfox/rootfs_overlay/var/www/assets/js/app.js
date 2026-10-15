@@ -1427,14 +1427,17 @@ $(document).ready(function () {
             }
             drive.val(s[drive.data('key')]);
         });
-        // MCLK is an input in EXT mode, its drive has no effect
-        $('#ln-mclk-drive').prop('disabled', st.i2s_mode === 'ext');
+        // With the USB output the I2S pins and the I2S driver are not used.
+        // MCLK is an input in EXT mode, its drive has no effect.
+        const usbOutput = st.output === 'usb';
+        $('#ln-drive').prop('disabled', usbOutput);
+        $('#ln-mclk-drive').prop('disabled', usbOutput || st.i2s_mode === 'ext');
 
         $('.ln-option').each(function() {
             const key = $(this).data('key');
             $(this).toggleClass('active', String($(this).data('value')) === s[key]);
         });
-        $('#ln-dma .ln-option').prop('disabled', !st.dma_supported);
+        $('#ln-dma .ln-option').prop('disabled', usbOutput || !st.dma_supported);
         $('#ln-dma-reboot').prop('hidden', st.dma_supported);
         // Only Scream reads this setting
         $('#ln-scream .ln-option').prop('disabled', !st.scream_active);

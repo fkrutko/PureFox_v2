@@ -8,6 +8,7 @@ const LOWNOISE_CONF = '/etc/lownoise.conf';
 const CPUFREQ = '/sys/devices/system/cpu/cpu0/cpufreq';
 const DMA_PARAM = '/sys/module/snd_soc_rockchip_i2s_tdm/parameters/periods_min';
 const I2S_CONF = '/etc/i2s.conf';
+const OUTPUT_FILE = '/etc/output';
 const DEFAULTS = [
     'CPU_MAX_FREQ' => '0',
     'I2S_DRIVE' => 'default',
@@ -36,6 +37,11 @@ function i2sMode() {
     return preg_match('/^MODE=(pll)\b/mi', $conf) ? 'pll' : 'ext';
 }
 
+// usb or i2s, as in status_fast.php; I2S when unset
+function outputMode() {
+    return strtoupper(trim((string) @file_get_contents(OUTPUT_FILE))) === 'USB' ? 'usb' : 'i2s';
+}
+
 function lownoiseStatus() {
     $frequencies = array_values(array_filter(preg_split('/\s+/', sysfs(CPUFREQ . '/scaling_available_frequencies'))));
     return [
@@ -46,6 +52,7 @@ function lownoiseStatus() {
         ],
         'dma_supported' => file_exists(DMA_PARAM),
         'i2s_mode' => i2sMode(),
+        'output' => outputMode(),
         'scream_active' => trim((string) shell_exec('pidof scream')) !== '',
     ];
 }
