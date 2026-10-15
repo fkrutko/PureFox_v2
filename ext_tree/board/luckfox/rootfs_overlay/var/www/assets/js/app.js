@@ -1386,6 +1386,8 @@ $(document).ready(function () {
         });
         $('#ln-dma .ln-option').prop('disabled', !st.dma_supported);
         $('#ln-dma-reboot').prop('hidden', st.dma_supported);
+        // Only Scream reads this setting
+        $('#ln-scream .ln-option').prop('disabled', !st.scream_active);
     }
 
     function loadLowNoise() {

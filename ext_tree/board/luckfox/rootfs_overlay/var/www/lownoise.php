@@ -46,6 +46,7 @@ function lownoiseStatus() {
         ],
         'dma_supported' => file_exists(DMA_PARAM),
         'i2s_mode' => i2sMode(),
+        'scream_active' => trim((string) shell_exec('pidof scream')) !== '',
     ];
 }
 

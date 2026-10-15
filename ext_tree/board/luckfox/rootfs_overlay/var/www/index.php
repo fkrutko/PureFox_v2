@@ -112,7 +112,7 @@
                     <div class="ln-title" data-lang="ln_scream">Scream resampling</div>
                     <div class="ln-hint" data-lang="ln_scream_hint">Off: a sample rate the output does not take fails instead of being resampled. Default: On.</div>
                 </div>
-                <div class="seg">
+                <div class="seg" id="ln-scream">
                     <button type="button" class="seg-option ln-option" data-key="SCREAM_RESAMPLE" data-value="0" data-lang="ln_off">Off</button>
                     <button type="button" class="seg-option ln-option" data-key="SCREAM_RESAMPLE" data-value="1" data-lang="ln_on">On</button>
                 </div>
