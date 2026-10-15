@@ -75,6 +75,7 @@ From the shell: `/opt/lownoise.sh set KEY VALUE`, see the script for the keys.
 
 - **Releases on GitHub.** Firmware builds are published as [GitHub releases](https://github.com/fkrutko/PureFox_v2/releases) of this repository, numbered `2.8.<commit count>` (e.g. 2.8.166).
 - **Online update from GitHub.** The version button in the web interface downloads the latest release over HTTPS with certificate verification (curl), checks its SHA-256 checksums and installs it over the running system, keeping user settings (output, I2S settings, Scream settings, password, …). The selected kernel is flashed, and only when it changed; the kernel choice is kept. The update no longer pulls files from luckfox.puredsd.ru.
+- **Back to ppy.** The **Back to ppy** button at the bottom of the [Tweaks](#tweaks-tab) tab replaces this firmware with the latest upstream build of ppy2, the way its own online update does (`/opt/to_ppy.sh`: rsync from luckfox.puredsd.ru, then the boot partitions are flashed), and reboots. Settings return to upstream defaults; the selected player is kept (Scream becomes APScream). To come back to this fork, flash its image over USB.
 
 ### Building
 

@@ -136,6 +136,11 @@ $(document).ready(function () {
             'ln_dma_reboot': 'Перезагрузите плату, чтобы включить.',
             'ln_scream': 'Ресемплинг Scream',
             'ln_scream_hint': 'Выкл: частота, которую выход не поддерживает, не пересчитывается, а вызывает ошибку. По умолчанию: Вкл.',
+            'ln_ppy': 'Вернуться на ppy',
+            'ln_ppy_hint': 'Заменяет эту прошивку последней сборкой ppy2 и перезагружает плату. Настройки сбрасываются на её значения по умолчанию. Вернуться обратно можно только прошивкой по USB.',
+            'ln_ppy_button': 'Вернуться на ppy',
+            'ln_ppy_confirm': 'Заменить эту прошивку сборкой ppy2? Вернуться обратно можно только прошивкой по USB.',
+            'ln_ppy_start': 'Переход на прошивку ppy2...',
             'ln_off': 'Выкл',
             'ln_on': 'Вкл',
             'ln_error': 'Не удалось применить настройку'
@@ -216,6 +221,11 @@ $(document).ready(function () {
             'ln_dma_reboot': 'Reboot to enable.',
             'ln_scream': 'Scream resampling',
             'ln_scream_hint': 'Off: a sample rate the output does not take fails instead of being resampled. Default: On.',
+            'ln_ppy': 'Back to ppy',
+            'ln_ppy_hint': 'Replaces this firmware with the latest upstream build of ppy2 and reboots. Settings return to its defaults. To come back, flash this firmware over USB.',
+            'ln_ppy_button': 'Back to ppy',
+            'ln_ppy_confirm': 'Replace this firmware with the ppy2 build? To come back you will have to flash it over USB.',
+            'ln_ppy_start': 'Switching to the ppy2 firmware...',
             'ln_off': 'Off',
             'ln_on': 'On',
             'ln_error': 'Could not apply the setting'
@@ -296,6 +306,11 @@ $(document).ready(function () {
             'ln_dma_reboot': 'Zum Aktivieren neu starten.',
             'ln_scream': 'Scream-Resampling',
             'ln_scream_hint': 'Aus: Eine vom Ausgang nicht unterstützte Abtastrate führt zu einem Fehler statt zu Resampling. Standard: Ein.',
+            'ln_ppy': 'Zurück zu ppy',
+            'ln_ppy_hint': 'Ersetzt diese Firmware durch den neuesten Upstream-Build von ppy2 und startet neu. Die Einstellungen gehen auf dessen Standardwerte zurück. Zurück nur per USB-Flash.',
+            'ln_ppy_button': 'Zurück zu ppy',
+            'ln_ppy_confirm': 'Diese Firmware durch den ppy2-Build ersetzen? Zurück geht es nur per USB-Flash.',
+            'ln_ppy_start': 'Wechsel zur ppy2-Firmware...',
             'ln_off': 'Aus',
             'ln_on': 'Ein',
             'ln_error': 'Einstellung konnte nicht übernommen werden'
@@ -376,6 +391,11 @@ $(document).ready(function () {
             'ln_dma_reboot': 'Redémarrez pour l\'activer.',
             'ln_scream': 'Rééchantillonnage Scream',
             'ln_scream_hint': 'Off : une fréquence non prise en charge par la sortie provoque une erreur au lieu d\'être rééchantillonnée. Par défaut : On.',
+            'ln_ppy': 'Retour à ppy',
+            'ln_ppy_hint': 'Remplace ce firmware par la dernière version amont de ppy2 et redémarre. Les réglages reviennent à ses valeurs par défaut. Pour revenir, flashez ce firmware par USB.',
+            'ln_ppy_button': 'Retour à ppy',
+            'ln_ppy_confirm': 'Remplacer ce firmware par la version ppy2 ? Pour revenir, il faudra le flasher par USB.',
+            'ln_ppy_start': 'Passage au firmware ppy2...',
             'ln_off': 'Off',
             'ln_on': 'On',
             'ln_error': 'Impossible d\'appliquer le réglage'
@@ -456,6 +476,11 @@ $(document).ready(function () {
             'ln_dma_reboot': '重启后启用。',
             'ln_scream': 'Scream 重采样',
             'ln_scream_hint': '关：输出不支持的采样率将报错，而不是被重采样。默认：开。',
+            'ln_ppy': '返回 ppy',
+            'ln_ppy_hint': '用 ppy2 最新的上游版本替换此固件并重启。设置恢复为其默认值。如需返回，请通过 USB 刷写此固件。',
+            'ln_ppy_button': '返回 ppy',
+            'ln_ppy_confirm': '用 ppy2 版本替换此固件？返回需要通过 USB 刷写。',
+            'ln_ppy_start': '正在切换到 ppy2 固件...',
             'ln_off': '关',
             'ln_on': '开',
             'ln_error': '无法应用设置'
@@ -1185,6 +1210,31 @@ $(document).ready(function () {
                 logContent.html(logContent.html());
             }
         });
+        });
+    });
+
+    // Back to the upstream firmware of ppy2 (run_update.php?target=ppy, /opt/to_ppy.sh)
+    $('#to-ppy').click(function() {
+        customConfirm(lnText('ln_ppy_confirm'), function(confirmed) {
+            if (!confirmed) return;
+            const logContent = $('#update-log-content').text(lnText('ln_ppy_start') + "\n");
+            let shown = 0;
+            $('#update-log-modal').addClass('show');
+            $.ajax({
+                url: 'run_update.php?target=ppy',
+                method: 'GET',
+                xhrFields: {
+                    onprogress: function(e) {
+                        const text = e.currentTarget.responseText;
+                        logContent.append(document.createTextNode(text.substring(shown)));
+                        shown = text.length;
+                        logContent.scrollTop(logContent.prop('scrollHeight'));
+                    }
+                },
+                error: function() {
+                    logContent.append('\n<span class="update-error">' + translations[currentLang]['update_error'] + '</span>');
+                }
+            });
         });
     });
 

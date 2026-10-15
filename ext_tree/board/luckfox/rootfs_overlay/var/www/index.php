@@ -117,6 +117,15 @@
                     <button type="button" class="seg-option ln-option" data-key="SCREAM_RESAMPLE" data-value="1" data-lang="ln_on">On</button>
                 </div>
             </div>
+
+            <!-- Back to the upstream firmware (/opt/to_ppy.sh) -->
+            <div class="ln-row">
+                <div class="ln-text">
+                    <div class="ln-title" data-lang="ln_ppy">Back to ppy</div>
+                    <div class="ln-hint" data-lang="ln_ppy_hint">Replaces this firmware with the latest upstream build of ppy2 and reboots. Settings return to its defaults. To come back, flash this firmware over USB.</div>
+                </div>
+                <button type="button" class="ln-button" id="to-ppy" data-lang="ln_ppy_button">Back to ppy</button>
+            </div>
         </div>
 
         <!-- Update and power management buttons -->
