@@ -4,16 +4,16 @@ require_once 'config.php';
 
 $configFile = '/usr/apscream/config.txt';
 
-// Defaults of the APScream 2.9 config.txt
+// Defaults of the APScream 2.9 config.txt, with the buffer and preload of apscream.mk
 $defaults = [
     'AP_MODE'               => '1',
     'TCP_MODE'              => '0',
     'MMAP_MODE'             => '1',
     'ALSA_PERIOD_FRAMES'    => '1024',
-    'ALSA_BUFFER_FRAMES'    => '32768',
+    'ALSA_BUFFER_FRAMES'    => '16384',
     'ALSA_PERIOD_TIME'      => '-1',
     'ALSA_BUFFER_TIME'      => '-1',
-    'PRELOAD_BUFFER_FRAMES' => '100000',
+    'PRELOAD_BUFFER_FRAMES' => '20000',
     'SCREAM_LATENCY'        => '200',
     'PORT'                  => '4011',
     'LOCK_CORE'             => '0',
