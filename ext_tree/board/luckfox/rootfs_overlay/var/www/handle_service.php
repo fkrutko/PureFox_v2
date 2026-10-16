@@ -80,7 +80,17 @@ try {
     // Hard-stop all known player processes (fallback)
     stopProcessGroup(['networkaudiod', 'scream', 'apscream']);
 
-    // Create one stable managed symlink, do not touch other S95 services
+    // Create one stable managed symlink. Older firmware left player links
+    // under other names (S95naa): drop every link to a player script so only
+    // one player starts at boot, other S95 services stay.
+    $playerScripts = array_map(function ($p) {
+        return '/etc/rc.pure/' . $p['script'];
+    }, $players);
+    foreach (glob('/etc/init.d/S95*') as $link) {
+        if (is_link($link) && in_array(readlink($link), $playerScripts, true)) {
+            executeCommand('rm -f ' . escapeshellarg($link));
+        }
+    }
     executeCommand('rm -f /etc/init.d/S95player');
     executeCommand('ln -s ' . escapeshellarg($scriptPath) . ' /etc/init.d/S95player');
     // Flush the choice to flash so it survives a power cut

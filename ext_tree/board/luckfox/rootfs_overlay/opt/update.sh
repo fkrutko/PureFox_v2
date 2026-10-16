@@ -164,6 +164,17 @@ MODE=$(sed -n 's/^MODE=//p' /etc/i2s.conf 2>/dev/null)
 MCLK=$(sed -n 's/^MCLK=//p' /etc/i2s.conf 2>/dev/null)
 
 umount "$NEW"
+
+# one player starts at boot: older firmware left links like S95naa next to S95player
+if [ -L /etc/init.d/S95player ]; then
+    for link in /etc/init.d/S95*; do
+        [ "$link" = /etc/init.d/S95player ] && continue
+        [ -L "$link" ] || continue
+        case "$(readlink "$link")" in
+            */S95naa|*/S95scream|*/S95apscream) rm -f "$link" ;;
+        esac
+    done
+fi
 sync
 
 # ---- kernel ----
