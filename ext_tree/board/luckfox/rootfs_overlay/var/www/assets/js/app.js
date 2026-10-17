@@ -57,6 +57,8 @@ $(document).ready(function () {
     }
     let previousActiveService = null;
 
+    // APrender serves its own settings page on port 7779
+    $('button[data-service="aprenderer"] .settings-link').attr('href', 'http://' + window.location.hostname + ':7779');
 
     // Language dictionaries (FULLY PRESERVED!)
     window.translations = {

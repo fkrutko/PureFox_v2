@@ -198,6 +198,7 @@ void get_active_service(char* service, pid_t *pid) {
         {"networkaudiod", "naa"},
         {"scream", "scream"},
         {"apscream", "apscream"},
+        {"ap2renderer", "aprenderer"},
         {NULL, NULL}
     };
     

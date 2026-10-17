@@ -44,6 +44,7 @@ KEEP_IF_PRESENT="
 /data/ethaddr.txt
 /etc/scream_receiver.conf
 /usr/apscream/config.txt
+/usr/aprenderer/config.dat
 /etc/kernel
 "
 # Created on the device only, never shipped in the image.
@@ -171,7 +172,7 @@ if [ -L /etc/init.d/S95player ]; then
         [ "$link" = /etc/init.d/S95player ] && continue
         [ -L "$link" ] || continue
         case "$(readlink "$link")" in
-            */S95naa|*/S95scream|*/S95apscream) rm -f "$link" ;;
+            */S95naa|*/S95scream|*/S95apscream|*/S95aprenderer) rm -f "$link" ;;
         esac
     done
 fi

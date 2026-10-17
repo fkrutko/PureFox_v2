@@ -43,6 +43,7 @@ $services = [
     'naa'         => 'networkaudiod',
     'scream'      => 'scream',
     'apscream'    => 'apscream',
+    'aprenderer'  => 'ap2renderer',
 ];
 
 $status = [
