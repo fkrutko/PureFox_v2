@@ -1,0 +1,11 @@
+config BR2_PACKAGE_YMUSIC
+	bool "ymusic"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_LIBCURL
+	select BR2_PACKAGE_OPENSSL
+	select BR2_PACKAGE_CA_CERTIFICATES
+	help
+	  Yandex Music for MPD (ported from DigiFox). ymusicd on 127.0.0.1:6601
+	  proxies the Yandex Music API for the web UI (yandex.php) and
+	  serves decrypted track streams (encraw, AES-128-CTR) to MPD,
+	  refilling "My Wave" in the MPD queue.

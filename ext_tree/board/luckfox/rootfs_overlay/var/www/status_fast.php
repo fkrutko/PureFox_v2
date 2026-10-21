@@ -44,6 +44,7 @@ $services = [
     'scream'      => 'scream',
     'apscream'    => 'apscream',
     'aprenderer'  => 'ap2renderer',
+    'mpd'         => 'mpd',
 ];
 
 $status = [

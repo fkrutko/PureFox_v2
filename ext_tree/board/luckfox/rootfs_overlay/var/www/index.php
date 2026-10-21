@@ -36,6 +36,12 @@
                 <img src="assets/img/settings.svg" class="settings-icon" alt="Settings">
             </a>
         </button>
+        <button class="btn-custom primary" data-service="mpd" data-process="mpd">
+            Яндекс Музыка
+            <a href="yandex.php" class="settings-link" data-lang="settings">
+                <img src="assets/img/settings.svg" class="settings-icon" alt="Settings">
+            </a>
+        </button>
 	<button class="btn-custom usb2i2s<?php echo file_exists('/etc/usb_to_i2s.state') ? ' active' : ''; ?>" id="usbto-i2s-btn">USB to I2S</button>
 <!--	<button class="btn-custom usb2i2s" id="dlna-bridge-btn">
 	    DLNA Bridge

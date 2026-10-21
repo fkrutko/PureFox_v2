@@ -47,6 +47,7 @@ $players = [
     'scream'     => ['process' => 'scream',          'script' => 'S95scream'],
     'apscream'   => ['process' => 'apscream',        'script' => 'S95apscream'],
     'aprenderer' => ['process' => 'ap2renderer',     'script' => 'S95aprenderer'],
+    'mpd'        => ['process' => 'mpd',             'script' => 'S95mpd'],
 ];
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -79,7 +80,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'scream', 'apscream', 'ap2renderer']);
+    stopProcessGroup(['networkaudiod', 'scream', 'apscream', 'ap2renderer', 'mpd']);
 
     // Create one stable managed symlink. Older firmware left player links
     // under other names (S95naa): drop every link to a player script so only

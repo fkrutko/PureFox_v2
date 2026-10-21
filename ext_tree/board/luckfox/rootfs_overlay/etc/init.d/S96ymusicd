@@ -1,0 +1,50 @@
+#!/bin/sh
+#
+# Яндекс Музыка — служба ymusicd (127.0.0.1:6601).
+# Работает всегда, независимо от выбранного плеера: веб-интерфейс (yandex.php)
+# ходит через неё в API Яндекса, MPD берёт у неё потоки треков.
+# Упала — перезапускается через 2 с. Журнал (только ошибки): /tmp/ymusicd.log
+# Токен: /var/lib/ymusic/token, качество: /var/lib/ymusic/quality.
+
+DAEMON=/usr/bin/ymusicd
+PIDFILE=/var/run/ymusicd-loop.pid
+LOG=/tmp/ymusicd.log
+
+start() {
+    [ -x $DAEMON ] || exit 0
+    if [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
+        echo "ymusicd: уже запущен"
+        return 0
+    fi
+    printf "Starting ymusicd: "
+    mkdir -p /tmp/ymusic
+    (
+        trap 'kill $CHILD 2>/dev/null; exit 0' TERM INT
+        while :; do
+            # журнал в ОЗУ не растёт бесконечно
+            [ -f $LOG ] && [ "$(wc -c < $LOG)" -gt 131072 ] && mv -f $LOG $LOG.old
+            $DAEMON >> $LOG 2>&1 &
+            CHILD=$!
+            wait $CHILD
+            sleep 2
+        done
+    ) </dev/null >/dev/null 2>&1 &
+    echo $! > $PIDFILE
+    echo "OK"
+}
+
+stop() {
+    printf "Stopping ymusicd: "
+    [ -f $PIDFILE ] && kill "$(cat $PIDFILE)" 2>/dev/null
+    rm -f $PIDFILE
+    killall ymusicd 2>/dev/null
+    echo "OK"
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart|reload) stop; sleep 1; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

@@ -2,7 +2,7 @@
 
 **Network audio endpoint on Luckfox Pico Max / Ultra with external clock support**
 
-> This is a fork of [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2) (`MAX_6.X` branch). It keeps only the NAA, Scream, APScream and APrender (UPnP) players, makes the output bit-perfect and lets you choose the Linux kernel: 6.1 or 5.10. A [Tweaks](#tweaks-tab) tab of the web page sets the CPU frequency, I2S pin drive and DMA periods. See [Changes in this fork](#changes-in-this-fork).
+> This is a fork of [ppy2/PureFox_v2](https://github.com/ppy2/PureFox_v2) (`MAX_6.X` branch). It keeps only the NAA, Scream, APScream, APrender (UPnP) and [Yandex Music](#yandex-music) players, makes the output bit-perfect and lets you choose the Linux kernel: 6.1 or 5.10. A [Tweaks](#tweaks-tab) tab of the web page sets the CPU frequency, I2S pin drive and DMA periods. See [Changes in this fork](#changes-in-this-fork).
 
 
 ## About
@@ -66,10 +66,11 @@ From the shell: `/opt/lownoise.sh set KEY VALUE`, see the script for the keys.
 
 ### Players
 
-- **Only NAA (HQPlayer), Scream, APScream and APrender (UPnP) remain.** Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli, APlayer, Spotify Connect, Qobuz Connect, Tidal Connect and CelMusper are removed, together with the libraries only they used. The root filesystem image shrank from about 39 MB to 26 MB (about 36 MB with the three kernels of the [kernel choice](#linux-kernel)).
+- **Only NAA (HQPlayer), Scream, APScream and APrender (UPnP) remain.** Roon Ready, Squeezelite, AirPlay (shairport-sync), MPD/upmpdcli (MPD is back only for [Yandex Music](#yandex-music)), APlayer, Spotify Connect, Qobuz Connect, Tidal Connect and CelMusper are removed, together with the libraries only they used. The root filesystem image shrank from about 39 MB to 26 MB (about 36 MB with the three kernels of the [kernel choice](#linux-kernel); Yandex Music with MPD adds about 1 MB).
 - **Scream next to APScream.** Besides the closed-source APScream receiver there is the open-source [Scream](https://github.com/duncanthrax/scream) 3.6 receiver (ALSA output). It needs the standard Scream driver on Windows; it does not take APScream's ASIO sender in AP or TCP mode. The settings page sets the mode (multicast/unicast), multicast group, port, network interface, latency and ALSA device. Scream may let ALSA resample a rate the I2S output does not take; the **Scream resampling** switch on the [Tweaks](#tweaks-tab) tab turns that off.
 - **APScream** is the latest (2.9) [Album Player](https://albumplayer.ru) receiver for the asioscream ASIO driver (native DSD, UDP or TCP, port 4011). Its settings page sets every `config.txt` parameter: AP, TCP and MMAP modes, port, ALSA buffer, preload, latency, CPU core and process priority. By default the ALSA buffer is 16384 frames and the preload 20000, so playback starts in about half a second at 44.1 kHz; the receiver's own 100000 took about 2 s. The preload must stay above the buffer (the driver rounds it up to a whole number of periods, 16384 becomes 16400), otherwise APScream plays nothing.
 - **NAA**: newer `networkaudiod`; the name shown in HQPlayer is unique per board (hostname plus the last six hex digits of the MAC address).
+- **Yandex Music** (ported from [DigiFox](https://github.com/DrModd/DigiFox)) plays through a minimal MPD, see [below](#yandex-music).
 - **The selected player survives a power cut**: the choice is written to flash as soon as it is made.
 
 ### Firmware and updates
@@ -180,6 +181,21 @@ Via web interface: **I2S ↔ USB** toggle
 - Scream (Windows network sound card)
 - APScream (ASIO, native DSD)
 - APrender (Album Player UPnP renderer, settings on port 7779)
+- Yandex Music (MPD)
+
+### Yandex Music
+
+Ported from [DigiFox](https://github.com/DrModd/DigiFox), which based it on the Volumio plugin [achechulin/volumio-plugins-sources](https://github.com/achechulin/volumio-plugins-sources/tree/master/yandex_music). No Node.js; the firmware's PHP has no HTTPS, so a small C service talks to Yandex. The page is in Russian.
+
+- **The Yandex Music button** in the player list starts MPD; pressing it again (or its settings icon) opens `yandex.php`: login, search, My Wave and stations, liked tracks, playlists (For you and your own), albums, artists, now playing with ⏮ ⏯ ⏭, ♥ (like) and ✕ (dislike and skip). If another player is active, the page switches to MPD when a track starts.
+- **MPD** is minimal: FLAC and MP3 decoders, curl input, ALSA output to the output selected in `/etc/asound.conf` with no software volume, no music database, upmpdcli or avahi. Port 6600 is open on the network, so MPD clients see the queue too.
+- **`ymusicd`** (C, libcurl + OpenSSL, `ext_tree/package/ymusic`, service `S96ymusicd`, always running) listens on `127.0.0.1:6601` only:
+  - `/api/...` forwards the page's requests to `api.music.yandex.net` with the token;
+  - `/track/<id>.flac?a=<album>` streams a track to MPD: the link comes from `get-file-info` (HMAC-SHA256 signature), the `encraw` transport is decrypted on the fly (AES-128-CTR), seeking works (Range), and a dropped CDN connection resumes where it stopped;
+  - My Wave: each track start sends `trackStarted` feedback; when fewer than 3 tracks are left in the MPD queue the next batch is added.
+- **Login:** the "Открыть вход Яндекса" button → after logging in, copy the page address with `access_token=…` and paste it on the page. Your password never reaches the board; the token is kept in `/var/lib/ymusic/token` and survives the online update.
+- **Quality:** Lossless FLAC (when the track has it, otherwise MP3 320), MP3 320 or normal MP3 (`/var/lib/ymusic/quality`). Needs a Yandex Plus subscription.
+- Error log: `/tmp/ymusicd.log`. Verbose log: `/etc/init.d/S96ymusicd stop; ymusicd -v`.
 
 ## Repository Branches
 

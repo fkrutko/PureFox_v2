@@ -976,7 +976,11 @@ $(document).ready(function () {
             return;
         }
 
-        if ($(this).hasClass('active')) return;
+        // Yandex Music plays through MPD: the active button opens its page
+        if ($(this).hasClass('active')) {
+            if ($(this).data('service') === 'mpd') window.location.href = 'yandex.php';
+            return;
+        }
 
         const service = $(this).data('service');
         
