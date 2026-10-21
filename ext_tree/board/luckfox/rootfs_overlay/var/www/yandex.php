@@ -371,7 +371,8 @@ if (isset($_GET['api'])) {
              'cover' => $tid !== '' ? str_replace('400x400', '200x200', (string)@file_get_contents(YM_TMP . "/$tid")) : '',
              'pos' => (float)($st['elapsed'] ?? 0), 'dur' => (float)($st['duration'] ?? 0),
              'n' => (int)($st['playlistlength'] ?? 0), 'song' => (int)($st['song'] ?? 0),
-             'audio' => $st['audio'] ?? '']);
+             'audio' => $st['audio'] ?? '', 'kbps' => (int)($st['bitrate'] ?? 0),
+             'codec' => $tid !== '' ? strtoupper(preg_replace('/[^\w-]/', '', (string)@file_get_contents(YM_TMP . "/$tid.codec"))) : '']);
     }
     fail('bad api');
 }
@@ -697,7 +698,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op'])) {
             $('np-title').textContent = r.title || '—';
             $('np-artist').textContent = r.artist || '';
             var a = (r.audio || '').split(':'), fmt = '';
-            if (a.length === 3) fmt = (a[1] === 'f' ? '32f' : a[1]) + ' бит / ' + (a[0] / 1000) + ' кГц · ';
+            // MP3: битрейт (MPD декодирует его в 24 бита, разрядность ничего не говорит); FLAC: бит / кГц
+            var lossy = r.codec && r.codec.indexOf('FLAC') !== 0;
+            var parts = [];
+            if (a.length === 3) {
+                if (!lossy) parts.push((a[1] === 'f' ? '32f' : a[1]) + ' бит');
+                else if (r.kbps) parts.push(r.kbps + ' кбит/с');
+                parts.push(a[0] / 1000 + ' кГц');
+            }
+            if (parts.length) fmt = (r.codec ? r.codec + ' ' : '') + parts.join(' / ') + ' · ';
+            else if (r.codec) fmt = r.codec + ' · ';
             $('np-meta').textContent = (r.state === 'play' ? '▶ ' : r.state === 'pause' ? '❚❚ ' : '■ ') + fmt +
                 mmss(r.pos * 1000) + (r.dur ? ' / ' + mmss(r.dur * 1000) : '');
             var c = $('np-cover');

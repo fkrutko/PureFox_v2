@@ -557,6 +557,16 @@ static int cdn_fetch(stream_t *s, const finfo_t *fi, long long from)
 
 static void wave_hook_start(const char *query, const char *tid);
 
+/* формат, который на самом деле отдаёт CDN (flac, mp3...): для «сейчас играет» */
+static void write_codec(const char *tid, const char *codec)
+{
+    char path[512];
+    mkdir(g_cover_d, 0755);
+    snprintf(path, sizeof path, "%s/%s.codec", g_cover_d, tid);
+    FILE *f = fopen(path, "w");
+    if (f) { fputs(codec, f); fclose(f); }
+}
+
 static void serve_track(int fd, const char *method, const char *path, const char *query, const char *range)
 {
     /* /track/<id>.<ext> */
@@ -595,6 +605,7 @@ static void serve_track(int fd, const char *method, const char *path, const char
             reply_json_err(fd, 502, err);
             return;
         }
+        if (!s.head_only) write_codec(tid, fi.codec);
         s.mime = !strcmp(fi.codec, "mp3") ? "audio/mpeg" : !strncmp(fi.codec, "flac", 4) ? "audio/flac"
                : !strcmp(fi.codec, "aac") ? "audio/aac" : "application/octet-stream";
         s.enc = !strcmp(fi.transport, "encraw") && strlen(fi.key) == 32;
