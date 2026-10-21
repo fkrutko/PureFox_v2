@@ -23,43 +23,43 @@ Closes GH-13210
 Closes GH-13213
 
 [Thomas: minor backporting tweaks]
+[Fedor: rebased on 8.3.36, xxhash hunk dropped as it is upstream]
 Signed-off-by: Thomas Petazzoni <thomas.petazzoni@bootlin.com>
 Upstream: https://github.com/php/php-src/commit/52dba99d47563f38d8ed5f84690a3cb2c1785475
 ---
- ext/date/config.w32        |  2 +-
- ext/dom/config.m4          |  2 +-
- ext/filter/config.m4       |  2 +-
- ext/gd/config.m4           |  5 ++---
- ext/gd/config.w32          |  2 +-
- ext/gmp/config.m4          |  2 +-
- ext/hash/config.m4         |  3 +--
- ext/hash/config.w32        | 10 +++-------
- ext/hash/php_hash_xxhash.h |  2 +-
- ext/iconv/config.m4        |  2 +-
- ext/iconv/config.w32       |  2 +-
- ext/json/config.w32        |  2 +-
- ext/libxml/config.w32      |  2 +-
- ext/libxml/config0.m4      |  2 +-
- ext/mysqli/config.m4       |  8 ++------
- ext/mysqli/config.w32      |  2 +-
- ext/pdo/config.m4          |  2 +-
- ext/phar/config.w32        |  1 +
- ext/session/config.m4      |  4 ++--
- ext/session/config.w32     |  2 +-
- ext/simplexml/config.m4    |  2 +-
- ext/simplexml/config.w32   |  2 +-
- ext/sockets/config.m4      |  2 +-
- ext/sodium/config.m4       |  1 +
- ext/sodium/config.w32      |  2 +-
- ext/xml/config.m4          |  2 +-
- ext/xml/config.w32         |  2 +-
- sapi/cli/config.m4         |  2 +-
- sapi/cli/config.w32        |  1 +
- sapi/embed/config.m4       |  2 +-
- 30 files changed, 35 insertions(+), 42 deletions(-)
+ ext/date/config.w32      |  2 +-
+ ext/dom/config.m4        |  2 +-
+ ext/filter/config.m4     |  2 +-
+ ext/gd/config.m4         |  5 ++---
+ ext/gd/config.w32        |  2 +-
+ ext/gmp/config.m4        |  2 +-
+ ext/hash/config.m4       |  3 +--
+ ext/hash/config.w32      | 10 +++-------
+ ext/iconv/config.m4      |  2 +-
+ ext/iconv/config.w32     |  2 +-
+ ext/json/config.w32      |  2 +-
+ ext/libxml/config.w32    |  2 +-
+ ext/libxml/config0.m4    |  2 +-
+ ext/mysqli/config.m4     |  8 ++------
+ ext/mysqli/config.w32    |  2 +-
+ ext/pdo/config.m4        |  2 +-
+ ext/phar/config.w32      |  1 +
+ ext/session/config.m4    |  4 ++--
+ ext/session/config.w32   |  2 +-
+ ext/simplexml/config.m4  |  2 +-
+ ext/simplexml/config.w32 |  2 +-
+ ext/sockets/config.m4    |  2 +-
+ ext/sodium/config.m4     |  1 +
+ ext/sodium/config.w32    |  2 +-
+ ext/xml/config.m4        |  2 +-
+ ext/xml/config.w32       |  2 +-
+ sapi/cli/config.m4       |  2 +-
+ sapi/cli/config.w32      |  1 +
+ sapi/embed/config.m4     |  2 +-
+ 29 files changed, 34 insertions(+), 41 deletions(-)
 
 diff --git a/ext/date/config.w32 b/ext/date/config.w32
-index cf9e220c558..23af2f7d658 100644
+index cf9e220..23af2f7 100644
 --- a/ext/date/config.w32
 +++ b/ext/date/config.w32
 @@ -19,5 +19,5 @@ tl_config.WriteLine("#define timelib_strndup estrndup");
@@ -70,7 +70,7 @@ index cf9e220c558..23af2f7d658 100644
 +PHP_INSTALL_HEADERS("ext/date", "php_date.h lib/timelib.h lib/timelib_config.h");
  AC_DEFINE('HAVE_TIMELIB_CONFIG_H', 1, 'Have timelib_config.h')
 diff --git a/ext/dom/config.m4 b/ext/dom/config.m4
-index 6a83d10c8e2..27fef334794 100644
+index 6a83d10..27fef33 100644
 --- a/ext/dom/config.m4
 +++ b/ext/dom/config.m4
 @@ -24,7 +24,7 @@ if test "$PHP_DOM" != "no"; then
@@ -83,7 +83,7 @@ index 6a83d10c8e2..27fef334794 100644
    ])
  fi
 diff --git a/ext/filter/config.m4 b/ext/filter/config.m4
-index 0108a17fb7a..b7934701bb6 100644
+index 0108a17..b793470 100644
 --- a/ext/filter/config.m4
 +++ b/ext/filter/config.m4
 @@ -8,6 +8,6 @@ if test "$PHP_FILTER" != "no"; then
@@ -95,7 +95,7 @@ index 0108a17fb7a..b7934701bb6 100644
    PHP_ADD_EXTENSION_DEP(filter, pcre)
  fi
 diff --git a/ext/gd/config.m4 b/ext/gd/config.m4
-index b31c9b2c0bd..ef55212d1ee 100644
+index b31c9b2..ef55212 100644
 --- a/ext/gd/config.m4
 +++ b/ext/gd/config.m4
 @@ -238,7 +238,7 @@ dnl Various checks for GD features
@@ -123,7 +123,7 @@ index b31c9b2c0bd..ef55212d1ee 100644
    PHP_SUBST(GDLIB_CFLAGS)
    PHP_SUBST(GDLIB_LIBS)
 diff --git a/ext/gd/config.w32 b/ext/gd/config.w32
-index 09b09df95d3..b779df48e91 100644
+index 09b09df..b779df4 100644
 --- a/ext/gd/config.w32
 +++ b/ext/gd/config.w32
 @@ -75,7 +75,7 @@ if (PHP_GD != "no") {
@@ -136,7 +136,7 @@ index 09b09df95d3..b779df48e91 100644
  		WARNING("gd not enabled; libraries and headers not found");
  	}
 diff --git a/ext/gmp/config.m4 b/ext/gmp/config.m4
-index fa55751cf16..657e43b407f 100644
+index fa55751..657e43b 100644
 --- a/ext/gmp/config.m4
 +++ b/ext/gmp/config.m4
 @@ -27,7 +27,7 @@ if test "$PHP_GMP" != "no"; then
@@ -149,7 +149,7 @@ index fa55751cf16..657e43b407f 100644
    PHP_NEW_EXTENSION(gmp, gmp.c, $ext_shared,, -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1)
    PHP_SUBST(GMP_SHARED_LIBADD)
 diff --git a/ext/hash/config.m4 b/ext/hash/config.m4
-index 46e66aa9f8c..1e1d2e3f698 100644
+index 46e66aa..1e1d2e3 100644
 --- a/ext/hash/config.m4
 +++ b/ext/hash/config.m4
 @@ -36,7 +36,6 @@ else
@@ -170,7 +170,7 @@ index 46e66aa9f8c..1e1d2e3f698 100644
  PHP_NEW_EXTENSION(hash, $EXT_HASH_SOURCES, 0,,$PHP_HASH_CFLAGS)
  PHP_INSTALL_HEADERS(ext/hash, $EXT_HASH_HEADERS)
 diff --git a/ext/hash/config.w32 b/ext/hash/config.w32
-index d38b032efd3..bafbd0b9f8d 100644
+index d38b032..bafbd0b 100644
 --- a/ext/hash/config.w32
 +++ b/ext/hash/config.w32
 @@ -34,13 +34,9 @@ if (!CHECK_HEADER_ADD_INCLUDE('PMurHash.h', 'CFLAGS_HASH', hash_murmur_dir)) {
@@ -190,26 +190,13 @@ index d38b032efd3..bafbd0b9f8d 100644
 -									'php_hash_murmur.h php_hash_xxhash.h');
 +									'php_hash_murmur.h php_hash_xxhash.h php_hash_fnv.h ' +
 +									'php_hash_joaat.h xxhash/xxhash.h');
-diff --git a/ext/hash/php_hash_xxhash.h b/ext/hash/php_hash_xxhash.h
-index a1e8840ce27..ace70deedb0 100644
---- a/ext/hash/php_hash_xxhash.h
-+++ b/ext/hash/php_hash_xxhash.h
-@@ -18,7 +18,7 @@
- #define PHP_HASH_XXHASH_H
- 
- #define XXH_INLINE_ALL 1
--#include "xxhash.h"
-+#include "xxhash/xxhash.h"
- 
- typedef struct {
- 	XXH32_state_t s;
 diff --git a/ext/iconv/config.m4 b/ext/iconv/config.m4
-index 3cf400fe962..63221eddb0b 100644
+index 23dae23..e911ba8 100644
 --- a/ext/iconv/config.m4
 +++ b/ext/iconv/config.m4
-@@ -149,7 +149,7 @@ int main(void) {
+@@ -163,7 +163,7 @@ int main(void) {
  
-     PHP_NEW_EXTENSION(iconv, iconv.c, $ext_shared,, [-DZEND_ENABLE_STATIC_TSRMLS_CACHE=1])
+     PHP_NEW_EXTENSION(iconv, iconv.c, $ext_shared,, [-DZEND_ENABLE_STATIC_TSRMLS_CACHE=1 -DICONV_CONST=$php_cv_iconv_const])
      PHP_SUBST(ICONV_SHARED_LIBADD)
 -    PHP_INSTALL_HEADERS([ext/iconv/])
 +    PHP_INSTALL_HEADERS([ext/iconv], [php_iconv.h])
@@ -217,7 +204,7 @@ index 3cf400fe962..63221eddb0b 100644
      AC_MSG_ERROR(Please reinstall the iconv library.)
    fi
 diff --git a/ext/iconv/config.w32 b/ext/iconv/config.w32
-index 31423dd121e..0087df54fe5 100644
+index 31423dd..0087df5 100644
 --- a/ext/iconv/config.w32
 +++ b/ext/iconv/config.w32
 @@ -17,7 +17,7 @@ if (PHP_ICONV != "no") {
@@ -230,7 +217,7 @@ index 31423dd121e..0087df54fe5 100644
  		WARNING("iconv support can't be enabled, libraries or headers are missing")
  		PHP_ICONV = "no";
 diff --git a/ext/json/config.w32 b/ext/json/config.w32
-index 255f2787728..84f77b6f8c9 100644
+index 255f278..84f77b6 100644
 --- a/ext/json/config.w32
 +++ b/ext/json/config.w32
 @@ -6,4 +6,4 @@ ADD_SOURCES(configure_module_dirname, "json_encoder.c json_parser.tab.c json_sca
@@ -240,7 +227,7 @@ index 255f2787728..84f77b6f8c9 100644
 -PHP_INSTALL_HEADERS("ext/json/", "php_json.h php_json_parser.h php_json_scanner.h");
 +PHP_INSTALL_HEADERS("ext/json", "php_json.h php_json_parser.h php_json_scanner.h");
 diff --git a/ext/libxml/config.w32 b/ext/libxml/config.w32
-index b11c57bc44a..e890ee4fc4e 100644
+index b11c57b..e890ee4 100644
 --- a/ext/libxml/config.w32
 +++ b/ext/libxml/config.w32
 @@ -15,7 +15,7 @@ if (PHP_LIBXML == "yes") {
@@ -253,7 +240,7 @@ index b11c57bc44a..e890ee4fc4e 100644
  		WARNING("libxml support can't be enabled, iconv or libxml are missing")
  		PHP_LIBXML = "no"
 diff --git a/ext/libxml/config0.m4 b/ext/libxml/config0.m4
-index 044a58fa624..7bee0126378 100644
+index 044a58f..7bee012 100644
 --- a/ext/libxml/config0.m4
 +++ b/ext/libxml/config0.m4
 @@ -12,6 +12,6 @@ if test "$PHP_LIBXML" != "no"; then
@@ -265,7 +252,7 @@ index 044a58fa624..7bee0126378 100644
    ])
  fi
 diff --git a/ext/mysqli/config.m4 b/ext/mysqli/config.m4
-index ad7fb7f6bfa..ab060ebc4f1 100644
+index ad7fb7f..ab060eb 100644
 --- a/ext/mysqli/config.m4
 +++ b/ext/mysqli/config.m4
 @@ -65,10 +65,6 @@ if test "$PHP_MYSQLI" != "no"; then
@@ -282,7 +269,7 @@ index ad7fb7f6bfa..ab060ebc4f1 100644
 +  PHP_ADD_EXTENSION_DEP(mysqli, mysqlnd)
  fi
 diff --git a/ext/mysqli/config.w32 b/ext/mysqli/config.w32
-index c2c4781dd36..141f993afda 100644
+index c2c4781..141f993 100644
 --- a/ext/mysqli/config.w32
 +++ b/ext/mysqli/config.w32
 @@ -22,6 +22,6 @@ if (PHP_MYSQLI != "no") {
@@ -294,7 +281,7 @@ index c2c4781dd36..141f993afda 100644
  	}
  }
 diff --git a/ext/pdo/config.m4 b/ext/pdo/config.m4
-index 9b9a3e36df7..2b182d1e516 100644
+index 9b9a3e3..2b182d1 100644
 --- a/ext/pdo/config.m4
 +++ b/ext/pdo/config.m4
 @@ -11,7 +11,7 @@ if test "$PHP_PDO" != "no"; then
@@ -307,7 +294,7 @@ index 9b9a3e36df7..2b182d1e516 100644
    dnl so we always include the known-good working hack.
    PHP_ADD_MAKEFILE_FRAGMENT
 diff --git a/ext/phar/config.w32 b/ext/phar/config.w32
-index c68ba08f2ca..16432165167 100644
+index c68ba08..1643216 100644
 --- a/ext/phar/config.w32
 +++ b/ext/phar/config.w32
 @@ -35,6 +35,7 @@ if (PHP_PHAR != "no") {
@@ -319,7 +306,7 @@ index c68ba08f2ca..16432165167 100644
  	ADD_MAKEFILE_FRAGMENT();
  }
 diff --git a/ext/session/config.m4 b/ext/session/config.m4
-index da31bbde86c..f356102ac46 100644
+index da31bbd..f356102 100644
 --- a/ext/session/config.m4
 +++ b/ext/session/config.m4
 @@ -18,7 +18,7 @@ if test "$PHP_SESSION" != "no"; then
@@ -340,7 +327,7 @@ index da31bbde86c..f356102ac46 100644
    AC_DEFINE(HAVE_LIBMM, 1, [Whether you have libmm])
  fi
 diff --git a/ext/session/config.w32 b/ext/session/config.w32
-index aff34f3c847..bb3df15ac29 100644
+index aff34f3..bb3df15 100644
 --- a/ext/session/config.w32
 +++ b/ext/session/config.w32
 @@ -5,5 +5,5 @@ ARG_ENABLE("session", "session support", "yes");
@@ -351,7 +338,7 @@ index aff34f3c847..bb3df15ac29 100644
 +	PHP_INSTALL_HEADERS("ext/session", "mod_mm.h php_session.h mod_files.h mod_user.h");
  }
 diff --git a/ext/simplexml/config.m4 b/ext/simplexml/config.m4
-index 8b8a6f814a1..734aa080fde 100644
+index 8b8a6f8..734aa08 100644
 --- a/ext/simplexml/config.m4
 +++ b/ext/simplexml/config.m4
 @@ -13,7 +13,7 @@ if test "$PHP_SIMPLEXML" != "no"; then
@@ -364,7 +351,7 @@ index 8b8a6f814a1..734aa080fde 100644
    ])
    PHP_ADD_EXTENSION_DEP(simplexml, libxml)
 diff --git a/ext/simplexml/config.w32 b/ext/simplexml/config.w32
-index a6011fedc20..8a1190d5272 100644
+index a6011fe..8a1190d 100644
 --- a/ext/simplexml/config.w32
 +++ b/ext/simplexml/config.w32
 @@ -21,7 +21,7 @@ if (PHP_SIMPLEXML == "yes") {
@@ -377,7 +364,7 @@ index a6011fedc20..8a1190d5272 100644
  		PHP_SIMPLEXML = "no";
  		WARNING("simplexml not enabled; libraries and headers not found");
 diff --git a/ext/sockets/config.m4 b/ext/sockets/config.m4
-index d0fad902114..0fb11e773f2 100644
+index d0fad90..0fb11e7 100644
 --- a/ext/sockets/config.m4
 +++ b/ext/sockets/config.m4
 @@ -103,5 +103,5 @@ if test "$PHP_SOCKETS" != "no"; then
@@ -388,7 +375,7 @@ index d0fad902114..0fb11e773f2 100644
 +  PHP_INSTALL_HEADERS([ext/sockets], [php_sockets.h])
  fi
 diff --git a/ext/sodium/config.m4 b/ext/sodium/config.m4
-index 05d9ebd5a13..a7a9131602e 100644
+index 05d9ebd..a7a9131 100644
 --- a/ext/sodium/config.m4
 +++ b/ext/sodium/config.m4
 @@ -15,5 +15,6 @@ if test "$PHP_SODIUM" != "no"; then
@@ -399,7 +386,7 @@ index 05d9ebd5a13..a7a9131602e 100644
    PHP_SUBST(SODIUM_SHARED_LIBADD)
  fi
 diff --git a/ext/sodium/config.w32 b/ext/sodium/config.w32
-index 2ff8b998d2d..738ef666eb0 100644
+index 2ff8b99..738ef66 100644
 --- a/ext/sodium/config.w32
 +++ b/ext/sodium/config.w32
 @@ -6,7 +6,7 @@ if (PHP_SODIUM != "no") {
@@ -412,7 +399,7 @@ index 2ff8b998d2d..738ef666eb0 100644
  		WARNING("libsodium not enabled; libraries and headers not found");
  	}
 diff --git a/ext/xml/config.m4 b/ext/xml/config.m4
-index 208f9e4c160..5c07ce079de 100644
+index 208f9e4..5c07ce0 100644
 --- a/ext/xml/config.m4
 +++ b/ext/xml/config.m4
 @@ -32,6 +32,6 @@ if test "$PHP_XML" != "no"; then
@@ -424,7 +411,7 @@ index 208f9e4c160..5c07ce079de 100644
    AC_DEFINE(HAVE_XML, 1, [ ])
  fi
 diff --git a/ext/xml/config.w32 b/ext/xml/config.w32
-index c0bb3168e88..f4fec691909 100644
+index c0bb316..f4fec69 100644
 --- a/ext/xml/config.w32
 +++ b/ext/xml/config.w32
 @@ -13,7 +13,7 @@ if (PHP_XML == "yes") {
@@ -437,7 +424,7 @@ index c0bb3168e88..f4fec691909 100644
  		WARNING("xml support can't be enabled, libraries or headers are missing")
  		PHP_XML = "no"
 diff --git a/sapi/cli/config.m4 b/sapi/cli/config.m4
-index 1b8e67f0b39..3e58a9aeb74 100644
+index 1b8e67f..3e58a9a 100644
 --- a/sapi/cli/config.m4
 +++ b/sapi/cli/config.m4
 @@ -56,6 +56,6 @@ if test "$PHP_CLI" != "no"; then
@@ -449,7 +436,7 @@ index 1b8e67f0b39..3e58a9aeb74 100644
  fi
  AC_MSG_RESULT($PHP_CLI)
 diff --git a/sapi/cli/config.w32 b/sapi/cli/config.w32
-index 28bb2fd4c6d..2a3475e5de6 100644
+index 28bb2fd..2a3475e 100644
 --- a/sapi/cli/config.w32
 +++ b/sapi/cli/config.w32
 @@ -8,6 +8,7 @@ if (PHP_CLI == "yes") {
@@ -461,10 +448,10 @@ index 28bb2fd4c6d..2a3475e5de6 100644
  	if (CHECK_LIB("edit_a.lib;edit.lib", "cli", PHP_CLI) &&
  		CHECK_HEADER_ADD_INCLUDE("editline/readline.h", "CFLAGS_CLI")) {
 diff --git a/sapi/embed/config.m4 b/sapi/embed/config.m4
-index 39d7dcf0a3f..1b44ee94120 100644
+index 71aab64..f595be3 100644
 --- a/sapi/embed/config.m4
 +++ b/sapi/embed/config.m4
-@@ -26,7 +26,7 @@ if test "$PHP_EMBED" != "no"; then
+@@ -29,7 +29,7 @@ if test "$PHP_EMBED" != "no"; then
    if test "$PHP_EMBED_TYPE" != "no"; then
      PHP_SUBST(LIBPHP_CFLAGS)
      PHP_SELECT_SAPI(embed, $PHP_EMBED_TYPE, php_embed.c, -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1)
@@ -473,6 +460,3 @@ index 39d7dcf0a3f..1b44ee94120 100644
    fi
    AC_MSG_RESULT([$PHP_EMBED_TYPE])
  else
--- 
-2.47.1
-
