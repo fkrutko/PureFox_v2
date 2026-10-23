@@ -1,5 +1,5 @@
 #!/bin/sh
-# MPD plays Yandex Music: yandex.php and ymusicd (S96ymusicd) fill its queue
+# MPD plays Yandex Music: ymusicd (S96ymusicd) fills its queue
 
 start() {
     printf "Starting MPD: "

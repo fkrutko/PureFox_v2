@@ -4,7 +4,7 @@
 #
 ################################################################################
 
-YMUSIC_VERSION = 1.0
+YMUSIC_VERSION = 2.0
 YMUSIC_SITE_METHOD = local
 YMUSIC_SITE = $(BR2_EXTERNAL_ext_tree_PATH)/package/ymusic
 YMUSIC_LICENSE = GPL-2.0+, MIT (cJSON)

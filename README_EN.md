@@ -185,17 +185,46 @@ Via web interface: **I2S ↔ USB** toggle
 
 ### Yandex Music
 
-Ported from [DigiFox](https://github.com/DrModd/DigiFox), which based it on the Volumio plugin [achechulin/volumio-plugins-sources](https://github.com/achechulin/volumio-plugins-sources/tree/master/yandex_music). No Node.js; the firmware's PHP has no HTTPS, so a small C service talks to Yandex. The page is in Russian.
+Ported from [DigiFox](https://github.com/DrModd/DigiFox), which based it on the Volumio plugin [achechulin/volumio-plugins-sources](https://github.com/achechulin/volumio-plugins-sources/tree/master/yandex_music). No Node.js and no web page: a small C service talks to Yandex and is controlled over the network by an app on your computer.
 
-- **The Yandex Music button** in the player list starts MPD; pressing it again (or its settings icon) opens `yandex.php`: login, search, My Wave and stations, liked tracks, playlists (For you and your own), albums, artists, now playing with ⏮ ⏯ ⏭, ♥ (like) and ✕ (dislike and skip). If another player is active, the page switches to MPD when a track starts.
+- **The Yandex Music button** in the player list starts MPD. Starting a track from the app does the same when another player is active.
 - **MPD** is minimal: FLAC and MP3 decoders, curl input, ALSA output to the output selected in `/etc/asound.conf` with no software volume, no music database, upmpdcli or avahi. Port 6600 is open on the network, so MPD clients see the queue too.
-- **`ymusicd`** (C, libcurl + OpenSSL, `ext_tree/package/ymusic`, service `S96ymusicd`, always running) listens on `127.0.0.1:6601` only:
-  - `/api/...` forwards the page's requests to `api.music.yandex.net` with the token;
-  - `/track/<id>.flac?a=<album>` streams a track to MPD: the link comes from `get-file-info` (HMAC-SHA256 signature), the `encraw` transport is decrypted on the fly (AES-128-CTR), seeking works (Range), and a dropped CDN connection resumes where it stopped;
+- **`ymusicd`** (C, libcurl + OpenSSL, `ext_tree/package/ymusic`, service `S96ymusicd`, always running) listens on port 6601:
+  - a JSON API for the app, see below;
+  - `/track/<id>.flac?a=<album>` (only from the board itself) streams a track to MPD: the link comes from `get-file-info` (HMAC-SHA256 signature), the `encraw` transport is decrypted on the fly (AES-128-CTR), seeking works (Range), and a dropped CDN connection resumes where it stopped;
   - My Wave: each track start sends `trackStarted` feedback; when fewer than 3 tracks are left in the MPD queue the next batch is added.
-- **Login:** the "Открыть вход Яндекса" button → after logging in, copy the page address with `access_token=…` and paste it on the page. Your password never reaches the board; the token is kept in `/var/lib/ymusic/token` and survives the online update.
+- **Login:** open the `oauth` link from `/status` in a browser, log in, and send the address of the page you land on (with `access_token=…`) to `POST /login`. Your password never reaches the board; the token is kept in `/var/lib/ymusic/token` and survives the online update.
 - **Quality:** Lossless FLAC (when the track has it, otherwise MP3 320), MP3 320 or normal MP3 (`/var/lib/ymusic/quality`). Needs a Yandex Plus subscription.
 - Error log: `/tmp/ymusicd.log`. Verbose log: `/etc/init.d/S96ymusicd stop; ymusicd -v`.
+
+#### Yandex Music API
+
+`http://<board>:6601/…`. Parameters go in the query string or in a POST form body (`application/x-www-form-urlencoded`). Every answer is JSON with `"ok": true`; on an error `"ok": false` and `"msg"` (in Russian) with an HTTP 4xx/5xx code. Covers are `https://` links at 400×400, durations are in seconds. `GET /` lists the endpoints. There is no authentication, like the rest of the board's network services.
+
+| Request | What it does |
+|---|---|
+| `GET /status` | version, `token`, `login`, `plus`, `quality`, `oauth` (login link) |
+| `POST /login` `token=` | log in with the `access_token` or the whole address after login |
+| `POST /logout` | delete the token |
+| `POST /quality` `q=lossless\|hq\|nq` | quality of the next tracks |
+| `GET /home` | `playlists` (own), `personal` (For you), `stations` (`seed`, `name`, `cover`, `color`) |
+| `GET /likes` | liked tracks |
+| `GET /search?q=` | `tracks`, `albums`, `artists`, `playlists` |
+| `GET /album?id=` · `/artist?id=` · `/playlist?uid=&kind=` | details with `tracks`; album and artist also have a `seed` for `/wave` |
+| `POST /queue` `ids=id:album,…&start=N` | replace the queue and play from track N; `append=1` adds to the end |
+| `POST /wave` `seed=` | My Wave (`user:onyourwave`, the default), a station, `album:<id>` or `artist:<id>` |
+| `GET /queue?before=5&after=10` | `prev`, `current`, `next` around the current track (up to 100 each way) |
+| `GET /now` | the current track: `state`, `title`, `artist`, `album`, `id`, `a`, `cover`, `pos`, `dur`, `song`, `n`, `wave`, `codec`, `audio`, `kbps`, `svc` (active player) |
+| `/next` `/prev` `/toggle` `/pause` `/stop` `/play?pos=N` | playback (GET or POST); `play` without `pos` resumes |
+| `POST /like` · `/dislike` `id=&a=` | like; dislike also skips the track |
+
+A track is `{"id","a"(album),"title","artist","album","cover","dur","ok"}`; `ok: false` means it can't be played, and `/queue` skips it.
+
+```sh
+curl http://192.168.1.43:6601/now
+curl -d seed=user:onyourwave http://192.168.1.43:6601/wave
+curl http://192.168.1.43:6601/next
+```
 
 ## Repository Branches
 

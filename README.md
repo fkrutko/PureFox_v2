@@ -190,17 +190,46 @@ wget -O /opt/update.sh https://raw.githubusercontent.com/fkrutko/PureFox_v2/MAX_
 
 ### Яндекс Музыка
 
-Перенесена из [DigiFox](https://github.com/DrModd/DigiFox) (там она сделана по мотивам плагина для Volumio [achechulin/volumio-plugins-sources](https://github.com/achechulin/volumio-plugins-sources/tree/master/yandex_music)). Node.js не нужен, в PHP прошивки нет HTTPS, поэтому с Яндексом общается небольшая служба на C.
+Перенесена из [DigiFox](https://github.com/DrModd/DigiFox) (там она сделана по мотивам плагина для Volumio [achechulin/volumio-plugins-sources](https://github.com/achechulin/volumio-plugins-sources/tree/master/yandex_music)). Node.js и веб-страницы нет: с Яндексом общается небольшая служба на C, а управляет ей по сети приложение на компьютере.
 
-- **Кнопка «Яндекс Музыка»** среди плееров включает MPD; повторное нажатие (или значок настроек) открывает страницу `yandex.php`: вход, поиск, «Моя волна» и станции, «Мне нравится», плейлисты («Для вас» и свои), альбомы, исполнители, «сейчас играет» с ⏮ ⏯ ⏭, ♥ (в «Мне нравится») и ✕ (не нравится — пропустить). Если активен другой плеер, страница сама включает MPD при запуске трека.
+- **Кнопка «Яндекс Музыка»** среди плееров включает MPD. Если активен другой плеер, запуск трека из приложения тоже включает MPD.
 - **MPD** собран минимально: декодеры FLAC и MP3, вход curl, вывод ALSA на выход из `/etc/asound.conf` без программной громкости, без базы музыки, upmpdcli и avahi. Порт 6600 открыт в сети, MPD-клиенты тоже видят очередь.
-- **`ymusicd`** (C, libcurl + OpenSSL, `ext_tree/package/ymusic`, служба `S96ymusicd`, работает всегда) слушает только `127.0.0.1:6601`:
-  - `/api/...` — пересылает запросы веб-страницы в `api.music.yandex.net` с токеном;
-  - `/track/<id>.flac?a=<альбом>` — поток трека для MPD: ссылка из `get-file-info` (подпись HMAC-SHA256), транспорт `encraw` расшифровывается на лету (AES-128-CTR), работает перемотка (Range), обрыв CDN докачивается с того же места;
+- **`ymusicd`** (C, libcurl + OpenSSL, `ext_tree/package/ymusic`, служба `S96ymusicd`, работает всегда) слушает порт 6601:
+  - JSON API для приложения, см. ниже;
+  - `/track/<id>.flac?a=<альбом>` (только с самой платы) — поток трека для MPD: ссылка из `get-file-info` (подпись HMAC-SHA256), транспорт `encraw` расшифровывается на лету (AES-128-CTR), работает перемотка (Range), обрыв CDN докачивается с того же места;
   - «Моя волна»: на старте каждого трека — отзыв `trackStarted`, когда в очереди MPD остаётся меньше 3 треков — следующая партия.
-- **Вход:** кнопка «Открыть вход Яндекса» → после входа скопировать адрес страницы с `access_token=…` и вставить его на странице. Пароль на плату не передаётся; токен хранится в `/var/lib/ymusic/token` и переживает онлайн-обновление.
+- **Вход:** открыть в браузере ссылку `oauth` из `/status`, войти и отправить адрес страницы, на которую попали (с `access_token=…`), в `POST /login`. Пароль на плату не передаётся; токен хранится в `/var/lib/ymusic/token` и переживает онлайн-обновление.
 - **Качество:** Lossless FLAC (если у трека есть, иначе MP3 320), MP3 320 или MP3 обычное (`/var/lib/ymusic/quality`). Нужна подписка Яндекс Плюс.
 - Журнал ошибок — `/tmp/ymusicd.log`. Подробный журнал: `/etc/init.d/S96ymusicd stop; ymusicd -v`.
+
+#### API Яндекс Музыки
+
+`http://<плата>:6601/…`. Параметры — в строке запроса или в теле POST-формы (`application/x-www-form-urlencoded`). Ответ всегда JSON с `"ok": true`; при ошибке `"ok": false` и `"msg"` с кодом HTTP 4xx/5xx. Обложки — ссылки `https://` 400×400, длительности — в секундах. `GET /` — список адресов. Авторизации нет, как и у остальных сетевых служб платы.
+
+| Запрос | Что делает |
+|---|---|
+| `GET /status` | версия, `token`, `login`, `plus`, `quality`, `oauth` (ссылка для входа) |
+| `POST /login` `token=` | вход: `access_token` или весь адрес страницы после входа |
+| `POST /logout` | удалить токен |
+| `POST /quality` `q=lossless\|hq\|nq` | качество следующих треков |
+| `GET /home` | `playlists` (свои), `personal` («Для вас»), `stations` (`seed`, `name`, `cover`, `color`) |
+| `GET /likes` | «Мне нравится» |
+| `GET /search?q=` | `tracks`, `albums`, `artists`, `playlists` |
+| `GET /album?id=` · `/artist?id=` · `/playlist?uid=&kind=` | подробности с `tracks`; у альбома и исполнителя ещё `seed` для `/wave` |
+| `POST /queue` `ids=id:альбом,…&start=N` | заменить очередь и играть с трека N; `append=1` — дописать в конец |
+| `POST /wave` `seed=` | «Моя волна» (`user:onyourwave`, по умолчанию), станция, `album:<id>` или `artist:<id>` |
+| `GET /queue?before=5&after=10` | `prev`, `current`, `next` вокруг текущего трека (до 100 в каждую сторону) |
+| `GET /now` | текущий трек: `state`, `title`, `artist`, `album`, `id`, `a`, `cover`, `pos`, `dur`, `song`, `n`, `wave`, `codec`, `audio`, `kbps`, `svc` (активный плеер) |
+| `/next` `/prev` `/toggle` `/pause` `/stop` `/play?pos=N` | управление (GET или POST); `play` без `pos` — продолжить |
+| `POST /like` · `/dislike` `id=&a=` | в «Мне нравится»; dislike ещё и пропускает трек |
+
+Трек — `{"id","a"(альбом),"title","artist","album","cover","dur","ok"}`; `ok: false` — играть нельзя, `/queue` его пропускает.
+
+```sh
+curl http://192.168.1.43:6601/now
+curl -d seed=user:onyourwave http://192.168.1.43:6601/wave
+curl http://192.168.1.43:6601/next
+```
   
   
 
