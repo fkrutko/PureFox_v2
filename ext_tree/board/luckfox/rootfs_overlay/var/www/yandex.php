@@ -8,8 +8,10 @@
 //   GET  ?api=search&q=                 -> {"tracks":[..],"albums":[..],"artists":[..],"playlists":[..]}
 //   GET  ?api=album&id= | artist&id= | playlist&uid=&kind= | likes
 //   GET  ?api=now                       -> что играет MPD
+//   GET  ?api=queue[&before=5&after=10] -> {"song":i,"n":..,"prev":[..],"current":{..},"next":[..]}
+//   GET  ?api=next|prev|toggle|play[&pos=N]|pause|stop  -> пульт для других устройств
 //   POST op=token value | op=logout | op=quality q | op=play tracks start append | op=wave seed
-//   POST op=ctl cmd=prev|toggle|next | op=like id a
+//   POST op=ctl cmd=prev|toggle|next|play [pos]|pause|stop | op=like id a
 require_once 'config.php';
 
 const YM_D      = 'http://127.0.0.1:6601';
@@ -165,6 +167,67 @@ class Mpd {
     function __destruct() { if ($this->s) { @fwrite($this->s, "close\n"); fclose($this->s); } }
 }
 function q($s) { return '"' . addcslashes(str_replace(["\r", "\n"], ' ', (string)$s), '"\\') . '"'; }
+
+// песня очереди MPD (currentsong / playlistinfo) -> трек Яндекса
+function ym_song($s, $size = '200x200') {
+    $file = $s['file'] ?? '';
+    $tid = preg_match('#127\.0\.0\.1:\d+/track/(\d+)#', $file, $mm) ? $mm[1] : '';
+    $aid = preg_match('#[?&]a=(\d+)#', $file, $ma) ? $ma[1] : '';
+    return ['song' => (int)($s['Pos'] ?? 0), 'ym' => $tid !== '', 'id' => $tid, 'a' => $aid,
+            'title' => $s['Title'] ?? ($file !== '' ? basename($file) : ''), 'artist' => $s['Artist'] ?? '',
+            'album' => $s['Album'] ?? '', 'dur' => (float)($s['duration'] ?? ($s['Time'] ?? 0)),
+            'cover' => $tid !== '' ? str_replace('400x400', $size, (string)@file_get_contents(YM_TMP . "/$tid")) : ''];
+}
+// playlistinfo: список песен (каждая начинается со строки file:)
+function mpd_songs($m, $c) {
+    $r = []; $s = null;
+    foreach ($m->cmd($c) as $l) {
+        $p = strpos($l, ': ');
+        if ($p === false) continue;
+        $k = substr($l, 0, $p);
+        if ($k === 'file') { if ($s !== null) $r[] = ym_song($s); $s = []; }
+        if ($s !== null && !isset($s[$k])) $s[$k] = substr($l, $p + 2);
+    }
+    if ($s !== null) $r[] = ym_song($s);
+    return $r;
+}
+// длительность потока MPD знает только после начала игры — берём из API, кэш /tmp/ymusic/<id>.dur
+function fill_dur(&$list) {
+    $need = [];
+    foreach ($list as $i => $s) {
+        if ($s['dur'] > 0 || !$s['ym']) continue;
+        $d = @file_get_contents(YM_TMP . "/{$s['id']}.dur");
+        if ($d !== false) $list[$i]['dur'] = (float)$d;
+        else $need[$s['id'] . ($s['a'] !== '' ? ':' . $s['a'] : '')][] = $i;
+    }
+    if (!$need) return;
+    $j = api('/tracks', ['track-ids' => implode(',', array_keys($need)), 'with-positions' => 'false']);
+    $got = [];
+    foreach ((array)($j['result'] ?? []) as $t)
+        if (isset($t['id'], $t['durationMs'])) $got[(string)$t['id']] = $t['durationMs'] / 1000;
+    @mkdir(YM_TMP, 0755, true);
+    foreach ($need as $k => $idx) {
+        $id = explode(':', $k)[0];
+        if (!isset($got[$id])) continue;
+        @file_put_contents(YM_TMP . "/$id.dur", $got[$id]);
+        foreach ($idx as $i) $list[$i]['dur'] = $got[$id];
+    }
+}
+// управление воспроизведением: prev|next|toggle|play|pause|stop, play с pos — песня очереди
+function ym_ctl($c, $pos = '') {
+    $map = ['prev' => 'previous', 'next' => 'next', 'stop' => 'stop', 'pause' => 'pause 1'];
+    try {
+        $m = new Mpd();
+        if ($c === 'toggle') {
+            $st = $m->kv('status');
+            $m->cmd(($st['state'] ?? '') === 'play' ? 'pause 1' : 'play');
+        } elseif ($c === 'play') {
+            $m->cmd($pos !== '' && ctype_digit($pos) ? "play $pos" : 'play');
+        } elseif (isset($map[$c])) {
+            $m->cmd($map[$c]);
+        } else fail('bad cmd');
+    } catch (Exception $e) { fail($e->getMessage()); }
+}
 
 function active_service() {
     $j = @json_decode((string)@file_get_contents('/tmp/system_status.json'), true);
@@ -362,17 +425,45 @@ if (isset($_GET['api'])) {
             $st = $m->kv('status');
             $cs = $m->kv('currentsong');
         } catch (Exception $e) { out(['state' => 'off']); }
-        $file = $cs['file'] ?? '';
-        $tid = preg_match('#127\.0\.0\.1:\d+/track/(\d+)#', $file, $mm) ? $mm[1] : '';
-        $aid = preg_match('#[?&]a=(\d+)#', $file, $ma) ? $ma[1] : '';
-        out(['state' => $st['state'] ?? 'stop', 'svc' => active_service(), 'ym' => $tid !== '',
-             'id' => $tid, 'a' => $aid, 'wave' => strpos($file, '&w=') !== false,
-             'title' => $cs['Title'] ?? ($file !== '' ? basename($file) : ''), 'artist' => $cs['Artist'] ?? '',
-             'cover' => $tid !== '' ? str_replace('400x400', '200x200', (string)@file_get_contents(YM_TMP . "/$tid")) : '',
-             'pos' => (float)($st['elapsed'] ?? 0), 'dur' => (float)($st['duration'] ?? 0),
+        $s = ym_song($cs);
+        $tid = $s['id'];
+        out(['state' => $st['state'] ?? 'stop', 'svc' => active_service(), 'ym' => $s['ym'],
+             'id' => $tid, 'a' => $s['a'], 'wave' => strpos($cs['file'] ?? '', '&w=') !== false,
+             'title' => $s['title'], 'artist' => $s['artist'], 'album' => $s['album'], 'cover' => $s['cover'],
+             'pos' => (float)($st['elapsed'] ?? 0), 'dur' => (float)($st['duration'] ?? $s['dur']),
              'n' => (int)($st['playlistlength'] ?? 0), 'song' => (int)($st['song'] ?? 0),
              'audio' => $st['audio'] ?? '', 'kbps' => (int)($st['bitrate'] ?? 0),
              'codec' => $tid !== '' ? strtoupper(preg_replace('/[^\w-]/', '', (string)@file_get_contents(YM_TMP . "/$tid.codec"))) : '']);
+    }
+
+    // соседи текущей песни в очереди MPD: prev — до неё (ближние в конце), next — после
+    if ($a === 'queue') {
+        $nb = max(0, min(100, (int)($_GET['before'] ?? 5)));
+        $na = max(0, min(100, (int)($_GET['after'] ?? 10)));
+        if (!mpd_up()) out(['state' => 'off', 'song' => -1, 'n' => 0, 'prev' => [], 'current' => null, 'next' => []]);
+        try {
+            $m = new Mpd();
+            $st = $m->kv('status');
+            $n = (int)($st['playlistlength'] ?? 0);
+            $cur = isset($st['song']) ? (int)$st['song'] : -1;
+            $from = max(0, $cur - $nb);
+            $to = min($n, $cur + 1 + $na);       // без текущей (cur = -1) — начало очереди
+            $list = $to > $from ? mpd_songs($m, "playlistinfo $from:$to") : [];
+        } catch (Exception $e) { fail($e->getMessage()); }
+        fill_dur($list);
+        $r = ['state' => $st['state'] ?? 'stop', 'song' => $cur, 'n' => $n, 'prev' => [], 'current' => null, 'next' => []];
+        foreach ($list as $s) {
+            if ($s['song'] < $cur) $r['prev'][] = $s;
+            elseif ($s['song'] === $cur) $r['current'] = $s;
+            else $r['next'][] = $s;
+        }
+        out($r);
+    }
+
+    // пульт для других устройств: GET ?api=next | prev | toggle | play[&pos=N] | pause | stop
+    if (in_array($a, ['next', 'prev', 'toggle', 'play', 'pause', 'stop'], true)) {
+        ym_ctl($a, trim((string)($_GET['pos'] ?? '')));
+        out(['ok' => true]);
     }
     fail('bad api');
 }
@@ -425,17 +516,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op'])) {
     }
 
     if ($op === 'ctl') {
-        $map = ['prev' => 'previous', 'next' => 'next', 'stop' => 'stop'];
-        $c = $P('cmd');
-        try {
-            $m = new Mpd();
-            if ($c === 'toggle') {
-                $st = $m->kv('status');
-                $m->cmd(($st['state'] ?? '') === 'play' ? 'pause 1' : 'play');
-            } elseif (isset($map[$c])) {
-                $m->cmd($map[$c]);
-            } else fail('bad cmd');
-        } catch (Exception $e) { fail($e->getMessage()); }
+        ym_ctl($P('cmd'), $P('pos'));
         out(['ok' => true]);
     }
 
