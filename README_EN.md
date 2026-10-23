@@ -216,6 +216,7 @@ Ported from [DigiFox](https://github.com/DrModd/DigiFox), which based it on the 
 | `GET /queue?before=5&after=10` | `prev`, `current`, `next` around the current track (up to 100 each way) |
 | `GET /now` | the current track: `state`, `title`, `artist`, `album`, `id`, `a`, `cover`, `pos`, `dur`, `song`, `n`, `wave`, `codec`, `audio`, `kbps`, `svc` (active player) |
 | `/next` `/prev` `/toggle` `/pause` `/stop` `/play?pos=N` | playback (GET or POST); `play` without `pos` resumes |
+| `/seek?t=95` · `/seek?d=-10` | seek: `t` is seconds from the start of the track, `d` is relative to the current position (`d=30` forward, `d=-10` back); fractions allowed; `pos` and `dur` in `/now` use the same seconds |
 | `POST /like` · `/dislike` `id=&a=` | like; dislike also skips the track |
 
 A track is `{"id","a"(album),"title","artist","album","cover","dur","ok"}`; `ok: false` means it can't be played, and `/queue` skips it.

@@ -221,6 +221,7 @@ wget -O /opt/update.sh https://raw.githubusercontent.com/fkrutko/PureFox_v2/MAX_
 | `GET /queue?before=5&after=10` | `prev`, `current`, `next` вокруг текущего трека (до 100 в каждую сторону) |
 | `GET /now` | текущий трек: `state`, `title`, `artist`, `album`, `id`, `a`, `cover`, `pos`, `dur`, `song`, `n`, `wave`, `codec`, `audio`, `kbps`, `svc` (активный плеер) |
 | `/next` `/prev` `/toggle` `/pause` `/stop` `/play?pos=N` | управление (GET или POST); `play` без `pos` — продолжить |
+| `/seek?t=95` · `/seek?d=-10` | перемотка: `t` — секунды от начала трека, `d` — от текущего места (`d=30` вперёд, `d=-10` назад); дробные можно; `pos` и `dur` в `/now` — в тех же секундах |
 | `POST /like` · `/dislike` `id=&a=` | в «Мне нравится»; dislike ещё и пропускает трек |
 
 Трек — `{"id","a"(альбом),"title","artist","album","cover","dur","ok"}`; `ok: false` — играть нельзя, `/queue` его пропускает.

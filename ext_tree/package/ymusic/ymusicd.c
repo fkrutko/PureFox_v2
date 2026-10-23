@@ -9,7 +9,7 @@
  *   Музыка:   GET /home · /likes · /search?q= · /album?id= · /artist?id= · /playlist?uid=&kind=
  *   Очередь:  POST /queue ids=id[:альбом],...&start=N[&append=1] · POST /wave seed=
  *             GET /queue?before=5&after=10 · GET /now
- *   Пульт:    /next /prev /toggle /play[?pos=N] /pause /stop · POST /like /dislike id=&a=
+ *   Пульт:    /next /prev /toggle /play[?pos=N] /pause /stop /seek?t=|d= · POST /like /dislike id=&a=
  *
  *   GET|HEAD /track/<id>.<flac|mp3>[?a=<альбом>&w=<сессия волны>&b=<партия>&s=<сид>]
  *       Только с 127.0.0.1 — аудиопоток трека для MPD. Ссылка берётся из /get-file-info
@@ -1881,11 +1881,21 @@ static void h_like(req_t *r)
     send_ok(r->fd, NULL);
 }
 
-/* next | prev | toggle | play [pos] | pause | stop */
+/* секунды: 12, 12.5; со знаком (sign) — и -5, +5 */
+static int secs_ok(const char *s, int sign)
+{
+    if (sign && (*s == '-' || *s == '+')) s++;
+    if (!isdigit((unsigned char)*s)) return 0;
+    while (isdigit((unsigned char)*s)) s++;
+    if (*s == '.') { s++; if (!isdigit((unsigned char)*s)) return 0; while (isdigit((unsigned char)*s)) s++; }
+    return !*s;
+}
+
+/* next | prev | toggle | play [pos] | pause | stop | seek t|d */
 static void h_ctl(req_t *r)
 {
     const char *c = r->path + 1;
-    char cmd[32], v[16];
+    char cmd[48], v[16];
     int fd = mpd_connect();
     if (fd < 0) { send_fail(r->fd, 503, "MPD не отвечает"); return; }
     if (!strcmp(c, "toggle")) {
@@ -1897,6 +1907,17 @@ static void h_ctl(req_t *r)
     } else if (!strcmp(c, "play")) {
         if (prm(r, "pos", v, sizeof v) && all_digits(v)) snprintf(cmd, sizeof cmd, "play %s", v);
         else snprintf(cmd, sizeof cmd, "play");
+    } else if (!strcmp(c, "seek")) {
+        /* t — с начала трека, d — от текущего места (+ в адресе — %2B, но и без знака вперёд) */
+        if (prm(r, "t", v, sizeof v) && secs_ok(v, 0)) {
+            snprintf(cmd, sizeof cmd, "seekcur %s", v);
+        } else if (prm(r, "d", v, sizeof v) && secs_ok(v, 1)) {
+            snprintf(cmd, sizeof cmd, "seekcur %s%s", (*v == '-' || *v == '+') ? "" : "+", v);
+        } else {
+            close(fd);
+            send_fail(r->fd, 400, "нужно t=<секунды> или d=<±секунды>");
+            return;
+        }
     } else {
         snprintf(cmd, sizeof cmd, "%s", !strcmp(c, "prev") ? "previous" : !strcmp(c, "pause") ? "pause 1" : c);
     }
@@ -1942,6 +1963,7 @@ static const struct { const char *path; void (*fn)(req_t *); const char *help; }
     { "/play",     h_ctl,      "?pos=N — песня очереди" },
     { "/pause",    h_ctl,      "" },
     { "/stop",     h_ctl,      "" },
+    { "/seek",     h_ctl,      "?t=<сек> — с начала трека | ?d=<±сек> — от текущего места" },
 };
 
 static void h_index(req_t *r)
