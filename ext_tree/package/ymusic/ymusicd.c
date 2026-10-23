@@ -79,6 +79,35 @@ static volatile int g_clients = 0;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_wave_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* Общие для всех запросов соединения, DNS и TLS-сессии: новое HTTPS-соединение
+ * на этом процессоре стоит ~0,5 с (в основном подготовка TLS), повторное — ~30 мс */
+static CURLSH *g_share;
+static pthread_mutex_t g_share_mx[CURL_LOCK_DATA_LAST];
+
+static void share_lock(CURL *h, curl_lock_data d, curl_lock_access a, void *u)
+{
+    (void)h; (void)a; (void)u;
+    pthread_mutex_lock(&g_share_mx[d]);
+}
+
+static void share_unlock(CURL *h, curl_lock_data d, void *u)
+{
+    (void)h; (void)u;
+    pthread_mutex_unlock(&g_share_mx[d]);
+}
+
+static void share_init(void)
+{
+    for (int i = 0; i < CURL_LOCK_DATA_LAST; i++) pthread_mutex_init(&g_share_mx[i], NULL);
+    g_share = curl_share_init();
+    if (!g_share) return;
+    curl_share_setopt(g_share, CURLSHOPT_LOCKFUNC, share_lock);
+    curl_share_setopt(g_share, CURLSHOPT_UNLOCKFUNC, share_unlock);
+    curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+    curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+    curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+}
+
 static void logm(int verbose_only, const char *fmt, ...)
 {
     if (verbose_only && !g_verbose) return;
@@ -270,6 +299,7 @@ static int api_call(const char *method, const char *path_q, const char *client,
     CURL *c = curl_easy_init();
     if (!c) return -1;
     struct curl_slist *hs = api_headers(client, ctype);
+    curl_easy_setopt(c, CURLOPT_SHARE, g_share);
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_HTTPHEADER, hs);
     curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
@@ -288,13 +318,17 @@ static int api_call(const char *method, const char *path_q, const char *client,
     CURLcode rc = curl_easy_perform(c);
     *status = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, status);
+    double tt = 0;
+    long nc = 0;
+    curl_easy_getinfo(c, CURLINFO_TOTAL_TIME, &tt);
+    curl_easy_getinfo(c, CURLINFO_NUM_CONNECTS, &nc);
     curl_slist_free_all(hs);
     curl_easy_cleanup(c);
     if (rc != CURLE_OK) {
         logm(0, "API %s %s: %s", method, path_q, curl_easy_strerror(rc));
         return -1;
     }
-    logm(1, "API %s %s -> %ld (%zu B)", method, path_q, *status, out->n);
+    logm(1, "API %s %s -> %ld (%zu B, %.3f с%s)", method, path_q, *status, out->n, tt, nc ? ", новое соединение" : "");
     return 0;
 }
 
@@ -535,6 +569,7 @@ static int cdn_fetch(stream_t *s, const finfo_t *fi, long long from)
     char range[64];
     s->status = 0; s->clen = -1; s->cr_start = 0;
     s->fetch_from = from; s->fetch_started = 0; s->skip = 0;
+    curl_easy_setopt(c, CURLOPT_SHARE, g_share);
     curl_easy_setopt(c, CURLOPT_URL, fi->url);
     curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
@@ -555,8 +590,22 @@ static int cdn_fetch(stream_t *s, const finfo_t *fi, long long from)
         curl_easy_setopt(c, CURLOPT_RANGE, range);
     }
     CURLcode rc = curl_easy_perform(c);
-    long code = 0;
+    long code = 0, nc = 0, redir = 0;
+    double tls = 0, ttfb = 0;
+    char *eff = NULL;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_getinfo(c, CURLINFO_NUM_CONNECTS, &nc);
+    curl_easy_getinfo(c, CURLINFO_REDIRECT_COUNT, &redir);
+    curl_easy_getinfo(c, CURLINFO_APPCONNECT_TIME, &tls);
+    curl_easy_getinfo(c, CURLINFO_STARTTRANSFER_TIME, &ttfb);
+    curl_easy_getinfo(c, CURLINFO_EFFECTIVE_URL, &eff);
+    if (g_verbose) {
+        char host[128] = "";
+        const char *h = eff ? strstr(eff, "://") : NULL;
+        if (h) snprintf(host, sizeof host, "%.*s", (int)strcspn(h + 3, "/"), h + 3);
+        logm(1, "CDN %s с %lld: соединений %ld, редиректов %ld, TLS %.3f, первый байт %.3f с",
+             host, from, nc, redir, tls, ttfb);
+    }
     curl_easy_cleanup(c);
     if (rc == CURLE_OK) return 0;
     if (s->cut) return 1;                                    /* клиент ушёл — не ошибка */
@@ -565,6 +614,7 @@ static int cdn_fetch(stream_t *s, const finfo_t *fi, long long from)
 }
 
 static void wave_hook_start(const char *query, const char *tid);
+static void prefetch_next(const char *tid);
 
 /* формат, который на самом деле отдаёт CDN (flac, mp3...): для «сейчас играет» */
 static void write_codec(const char *tid, const char *codec)
@@ -574,6 +624,129 @@ static void write_codec(const char *tid, const char *codec)
     snprintf(path, sizeof path, "%s/%s.codec", g_cover_d, tid);
     FILE *f = fopen(path, "w");
     if (f) { fputs(codec, f); fclose(f); }
+}
+
+/* тип, шифр и ключ потока по ссылке на файл */
+static void stream_setup(stream_t *s, const finfo_t *fi)
+{
+    s->mime = !strcmp(fi->codec, "mp3") ? "audio/mpeg" : !strncmp(fi->codec, "flac", 4) ? "audio/flac"
+            : !strcmp(fi->codec, "aac") ? "audio/aac" : "application/octet-stream";
+    s->enc = !strcmp(fi->transport, "encraw") && strlen(fi->key) == 32;
+    if (s->enc)
+        for (int k = 0; k < 16; k++) {
+            char h[3] = { fi->key[2 * k], fi->key[2 * k + 1], 0 };
+            s->key[k] = (unsigned char)strtol(h, NULL, 16);
+        }
+}
+
+/* Начала соседних треков очереди (уже расшифрованные) в памяти: «дальше» и
+ * «назад» отдают их MPD сразу, а соединение с CDN для остального (~0,5–1 с
+ * на этом процессоре) открывается, пока MPD играет начало */
+#define PRE_BYTES (512 * 1024)
+typedef struct {
+    char tid[32], quality[12], codec[16];
+    unsigned char *data;
+    size_t len;
+    long long total;
+    time_t t;
+} pre_t;
+static pre_t g_pre[4];
+
+static int pre_have(const char *tid, const char *q)
+{
+    int r = 0;
+    pthread_mutex_lock(&g_lock);
+    for (size_t i = 0; i < sizeof g_pre / sizeof g_pre[0] && !r; i++)
+        r = g_pre[i].data && !strcmp(g_pre[i].tid, tid) && !strcmp(g_pre[i].quality, q);
+    pthread_mutex_unlock(&g_lock);
+    return r;
+}
+
+/* копия начала трека (data — освободить) или 0 */
+static int pre_take(const char *tid, pre_t *out)
+{
+    char qb[16];
+    const char *q = get_quality(qb, sizeof qb);
+    int r = 0;
+    pthread_mutex_lock(&g_lock);
+    for (size_t i = 0; i < sizeof g_pre / sizeof g_pre[0]; i++)
+        if (g_pre[i].data && !strcmp(g_pre[i].tid, tid) && !strcmp(g_pre[i].quality, q)) {
+            *out = g_pre[i];
+            out->data = malloc(g_pre[i].len);
+            if (out->data) { memcpy(out->data, g_pre[i].data, g_pre[i].len); r = 1; }
+            break;
+        }
+    pthread_mutex_unlock(&g_lock);
+    return r;
+}
+
+static size_t cb_pre(char *d, size_t sz, size_t n, void *u)
+{
+    buf_t *b = u;
+    size_t len = sz * n, k = b->n + len > PRE_BYTES ? PRE_BYTES - b->n : len;
+    if (k && buf_add(b, d, k)) return 0;
+    return k == len ? len : 0;                 /* CDN не выполнил Range — хватит */
+}
+
+static void pre_fill(const char *tid)
+{
+    char qb[16], err[300], range[32];
+    const char *q = get_quality(qb, sizeof qb);
+    if (pre_have(tid, q)) return;
+    finfo_t fi;
+    if (file_info(tid, &fi, err, sizeof err)) return;
+    stream_t s;
+    memset(&s, 0, sizeof s);
+    s.total = -1;
+    s.clen = -1;
+    stream_setup(&s, &fi);
+    buf_t b = {0};
+    CURL *c = curl_easy_init();
+    if (!c) return;
+    snprintf(range, sizeof range, "0-%d", PRE_BYTES - 1);
+    curl_easy_setopt(c, CURLOPT_SHARE, g_share);
+    curl_easy_setopt(c, CURLOPT_URL, fi.url);
+    curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(c, CURLOPT_RANGE, range);
+    curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, cb_hdr);
+    curl_easy_setopt(c, CURLOPT_HEADERDATA, &s);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb_pre);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &b);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_perform(c);
+    curl_easy_cleanup(c);
+    if (s.status == 200 && s.total < 0) s.total = s.clen;
+    unsigned char *plain = NULL;
+    if ((s.status == 200 || s.status == 206) && s.total > 0 && b.n &&
+        (b.n == PRE_BYTES || (long long)b.n == s.total) && (plain = malloc(b.n + 32))) {
+        int ol = 0;
+        if (!s.enc) memcpy(plain, b.p, b.n);
+        else if (ctr_init(&s, 0) || !EVP_DecryptUpdate(s.ctx, plain, &ol, (unsigned char *)b.p, (int)b.n) ||
+                 ol != (int)b.n) { free(plain); plain = NULL; }
+    }
+    if (s.ctx) EVP_CIPHER_CTX_free(s.ctx);
+    if (plain) {
+        pthread_mutex_lock(&g_lock);
+        size_t k = 0;
+        for (size_t i = 0; i < sizeof g_pre / sizeof g_pre[0]; i++) {
+            if (!strcmp(g_pre[i].tid, tid) || !g_pre[i].data) { k = i; break; }
+            if (g_pre[i].t < g_pre[k].t) k = i;
+        }
+        free(g_pre[k].data);
+        snprintf(g_pre[k].tid, sizeof g_pre[k].tid, "%s", tid);
+        snprintf(g_pre[k].quality, sizeof g_pre[k].quality, "%s", q);
+        snprintf(g_pre[k].codec, sizeof g_pre[k].codec, "%s", fi.codec);
+        g_pre[k].data = plain;
+        g_pre[k].len = b.n;
+        g_pre[k].total = s.total;
+        g_pre[k].t = time(NULL);
+        pthread_mutex_unlock(&g_lock);
+        logm(1, "трек %s: начало в памяти (%zu Б из %lld)", tid, b.n, s.total);
+    }
+    free(b.p);
 }
 
 static void serve_track(int fd, const char *method, const char *path, const char *query, const char *range)
@@ -604,25 +777,37 @@ static void serve_track(int fd, const char *method, const char *path, const char
     }
 
     /* «Моя волна»: отзыв и подкачка — как только MPD начал трек (не при перемотке) */
-    if (!s.head_only && (!s.ranged || s.req_start == 0)) wave_hook_start(query, tid);
+    if (!s.head_only && (!s.ranged || s.req_start == 0)) {
+        wave_hook_start(query, tid);
+        prefetch_next(tid);
+    }
 
     finfo_t fi;
     char err[300];
-    for (int attempt = 0; attempt < 2; attempt++) {
+    int from_mem = 0;
+    pre_t pre;
+    if (!s.head_only && s.req_end < 0 && pre_take(tid, &pre)) {
+        long long a = s.ranged ? s.req_start : 0;
+        if (a < (long long)pre.len) {
+            from_mem = 1;
+            s.total = pre.total;
+            s.mime = !strcmp(pre.codec, "mp3") ? "audio/mpeg" : !strncmp(pre.codec, "flac", 4) ? "audio/flac"
+                   : !strcmp(pre.codec, "aac") ? "audio/aac" : "application/octet-stream";
+            write_codec(tid, pre.codec);
+            if (send_head(&s) || send_all(fd, pre.data + a, pre.len - (size_t)a)) s.cut = 1;
+            else s.sent = (long long)pre.len - a;
+            logm(1, "трек %s: начало из памяти", tid);
+        }
+        free(pre.data);
+    }
+    for (int attempt = 0; attempt < 2 && !from_mem; attempt++) {
         if (file_info(tid, &fi, err, sizeof err)) {
             logm(0, "трек %s: %s", tid, err);
             reply_json_err(fd, 502, err);
             return;
         }
         if (!s.head_only) write_codec(tid, fi.codec);
-        s.mime = !strcmp(fi.codec, "mp3") ? "audio/mpeg" : !strncmp(fi.codec, "flac", 4) ? "audio/flac"
-               : !strcmp(fi.codec, "aac") ? "audio/aac" : "application/octet-stream";
-        s.enc = !strcmp(fi.transport, "encraw") && strlen(fi.key) == 32;
-        if (s.enc)
-            for (int k = 0; k < 16; k++) {
-                char h[3] = { fi.key[2 * k], fi.key[2 * k + 1], 0 };
-                s.key[k] = (unsigned char)strtol(h, NULL, 16);
-            }
+        stream_setup(&s, &fi);
         long long start = s.ranged ? s.req_start : 0;
         if (ctr_init(&s, start)) { reply_json_err(fd, 500, "AES init"); return; }
         s.failed = 0;
@@ -635,14 +820,17 @@ static void serve_track(int fd, const char *method, const char *path, const char
     }
 
     if (!s.head_only && s.headers_sent && !s.cut) {
-        /* обрыв со стороны CDN: докачать с того же места (до 4 раз) */
+        /* обрыв со стороны CDN (или начало было из памяти): докачать с того же места */
         long long base = s.ranged ? s.req_start : 0;
         long long want = s.total > 0 ? (s.req_end >= 0 && s.req_end < s.total ? s.req_end + 1 : s.total) - base : -1;
         for (int retry = 0; retry < 4 && want > 0 && s.sent < want && !s.cut; retry++) {
             long long pos = base + s.sent;
-            logm(0, "трек %s: докачка с %lld", tid, pos);
-            cache_drop(tid);
+            if (retry || !from_mem) {
+                logm(0, "трек %s: докачка с %lld", tid, pos);
+                cache_drop(tid);
+            }
             if (file_info(tid, &fi, err, sizeof err)) break;
+            stream_setup(&s, &fi);
             if (ctr_init(&s, pos)) break;
             s.ranged = 1;                     /* заголовки уже отправлены, дальше только тело */
             if (cdn_fetch(&s, &fi, pos) == 1) break;
@@ -1325,6 +1513,61 @@ done:
     pthread_mutex_unlock(&g_wave_lock);
     free(w);
     return NULL;
+}
+
+/* номер трека Яндекса у песни pos очереди MPD; 0 — нет */
+static int queue_tid(int fd, long pos, char *out, size_t sz)
+{
+    char cmd[48];
+    buf_t r = {0};
+    out[0] = 0;
+    snprintf(cmd, sizeof cmd, "playlistinfo %ld", pos);
+    if (!mpd_cmd(fd, cmd, &r) && r.p) {
+        char *t = strstr(r.p, "/track/");
+        for (size_t i = 0; t && isdigit((unsigned char)t[7 + i]) && i + 1 < sz; i++) {
+            out[i] = t[7 + i];
+            out[i + 1] = 0;
+        }
+    }
+    free(r.p);
+    return out[0] != 0;
+}
+
+/* Соседи трека в очереди — заранее: начало файла в памяти (pre_fill), заодно
+ * ссылка в кэше и соединения в общем пуле */
+static void *prefetch_thread(void *arg)
+{
+    char *tid = arg, cmd[96], next[32] = "", prev[32] = "";
+    sleep(3);                                  /* не мешать началу текущего трека */
+    int fd = mpd_connect();
+    if (fd >= 0) {
+        buf_t r = {0};
+        snprintf(cmd, sizeof cmd, "playlistsearch file \"/track/%s.\"", tid);
+        long pos = !mpd_cmd(fd, cmd, &r) && r.p && strstr(r.p, "Pos: ") ? kv_long(r.p, "Pos") : -1;
+        free(r.p); r = (buf_t){0};
+        long len = pos >= 0 && !mpd_cmd(fd, "status", &r) && r.p ? kv_long(r.p, "playlistlength") : -1;
+        free(r.p);
+        if (pos + 1 < len) queue_tid(fd, pos + 1, next, sizeof next);
+        if (pos > 0) queue_tid(fd, pos - 1, prev, sizeof prev);
+        close(fd);
+    }
+    if (next[0]) pre_fill(next);
+    if (prev[0]) pre_fill(prev);
+    free(tid);
+    return NULL;
+}
+
+static void prefetch_next(const char *tid)
+{
+    char *t = strdup(tid);
+    pthread_t th;
+    pthread_attr_t at;
+    if (!t) return;
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&at, 256 * 1024);
+    if (pthread_create(&th, &at, prefetch_thread, t)) free(t);
+    pthread_attr_destroy(&at);
 }
 
 static void wave_hook_start(const char *query, const char *tid)
@@ -2107,6 +2350,7 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
     setvbuf(stderr, NULL, _IOLBF, 0);
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    share_init();
 
     int ls = socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;
