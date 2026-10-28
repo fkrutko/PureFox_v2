@@ -17,8 +17,10 @@
  *       расшифровывается на лету (AES-128-CTR, ключ из ответа, счётчик с нуля). Range
  *       поддерживается (перемотка в MPD), обрыв со стороны CDN — докачка с того же места.
  *       Content-Type: audio/flac | audio/mpeg — по нему MPD выбирает декодер.
- *       Для треков «Моей волны» (w=...) — отзыв trackStarted и подкачка следующей
- *       партии в очередь MPD, когда до конца очереди остаётся меньше 3 треков.
+ *       Для треков «Моей волны» (w=...) — отзывы как у приложения (trackStarted, при уходе
+ *       с прошлого trackFinished или skip со временем прослушивания) и подкачка следующей
+ *       партии в очередь MPD, когда до конца очереди остаётся меньше 3 треков или трек
+ *       пропущен вперёд (тогда невыслушанное волны из очереди убирается).
  *
  * Играть начинает MPD: если активен другой плеер, /queue и /wave переключают на MPD
  * через handle_service.php, как кнопка «Яндекс Музыка» на главной.
@@ -1394,24 +1396,70 @@ static cJSON *song_json(const char *blk)
 }
 
 /* ---------- Моя волна ---------- */
-typedef struct { char sid[160], batch[160], seed[160], tid[32], aid[32]; } wave_t;
+/* Как приложение Яндекс Музыки: trackStarted в начале трека, при уходе с него — trackFinished
+ * (дослушан) или skip (пропущен) со временем прослушивания; queue в запросе партии — сыгранное
+ * до текущего включительно (последние WAVE_HIST); пропуск вперёд — невыслушанное из очереди
+ * вон и сразу свежая партия. */
+#define WAVE_HIST       100
 
-static void wave_feedback(const wave_t *w)
+enum { WV_NONE, WV_FWD, WV_BACK, WV_DISLIKE };       /* как ушли с трека через наш API */
+
+/* что играет в волне и что уже сыграно — под g_wv_mx */
+static struct {
+    char hist[WAVE_HIST][80];                        /* id[:альбом], старые первыми */
+    int hn;
+    char cur[80], cur_sid[160], cur_batch[160];      /* текущий трек волны */
+    double cur_dur, cur_t;                           /* длительность; когда MPD открыл поток */
+    int mark;                                        /* WV_*: ушли с cur через API */
+    double mark_played, mark_t;
+} g_wv;
+static pthread_mutex_t g_wv_mx = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+    char sid[160], batch[160], seed[160], id[80];
+    char prev[80], prev_sid[160], prev_batch[160];   /* трек, с которого ушли */
+    const char *prev_type;                           /* NULL — об уходе не сообщать */
+    double prev_played, prev_len;
+    int refresh;                                     /* пропуск вперёд: свежая партия сейчас */
+    char hist[WAVE_HIST][80];
+    int hn;
+} wave_t;
+
+static double mono_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+/* трек tid среди id[:альбом] */
+static int id_in(char (*v)[80], int n, const char *tid)
+{
+    size_t l = strlen(tid);
+    for (int i = 0; i < n; i++)
+        if (!strncmp(v[i], tid, l) && (v[i][l] == 0 || v[i][l] == ':')) return 1;
+    return 0;
+}
+
+/* отзыв в сессию волны; played < 0 — без totalPlayedSeconds, len <= 0 — без trackLengthSeconds */
+static void rotor_feedback(const char *sid, const char *batch, const char *type, const char *id,
+                           double played, double len)
 {
     char ts[40], path[256];
     iso_now(ts, sizeof ts);
     cJSON *o = cJSON_CreateObject(), *ev = cJSON_AddObjectToObject(o, "event");
-    char id[80];
-    snprintf(id, sizeof id, "%s%s%s", w->tid, w->aid[0] ? ":" : "", w->aid);
-    cJSON_AddStringToObject(ev, "type", "trackStarted");
+    cJSON_AddStringToObject(ev, "type", type);
     cJSON_AddStringToObject(ev, "timestamp", ts);
-    cJSON_AddStringToObject(ev, "trackId", id);
-    if (w->batch[0]) cJSON_AddStringToObject(o, "batchId", w->batch);
+    if (id && id[0]) cJSON_AddStringToObject(ev, "trackId", id);
+    if (played >= 0) cJSON_AddNumberToObject(ev, "totalPlayedSeconds", (long long)(played * 1000) / 1000.0);
+    if (len > 0) cJSON_AddNumberToObject(ev, "trackLengthSeconds", len);
+    if (batch && batch[0]) cJSON_AddStringToObject(o, "batchId", batch);
     char *body = cJSON_PrintUnformatted(o);
-    char *esid = url_esc(w->sid);
+    char *esid = url_esc(sid);
     snprintf(path, sizeof path, "/rotor/session/%s/feedback", esid);
-    cJSON *r = api_json("POST", path, ANDROID_CLIENT, body);
-    cJSON_Delete(r);
+    cJSON_Delete(api_json("POST", path, ANDROID_CLIENT, body));
+    if (played >= 0) logm(1, "волна: %s %s (%.0f с)", type, id ? id : "", played);
+    else logm(1, "волна: %s %s", type, id ? id : "");
     free(esid); free(body); cJSON_Delete(o);
 }
 
@@ -1426,49 +1474,72 @@ static void wave_query(char *out, size_t sz, const char *sid, const char *batch,
 static void *wave_thread(void *arg)
 {
     wave_t *w = arg;
-    if (w->sid[0]) wave_feedback(w);
-    if (pthread_mutex_trylock(&g_wave_lock)) { free(w); return NULL; }
+    if (w->prev_type) rotor_feedback(w->prev_sid, w->prev_batch, w->prev_type, w->prev, w->prev_played, w->prev_len);
+    rotor_feedback(w->sid, w->batch, "trackStarted", w->id, -1, 0);
+    pthread_mutex_lock(&g_wave_lock);
 
+    buf_t st = {0}, pl = {0}, del = {0};
+    char (*next)[80] = NULL;                         /* что ещё в очереди после текущей */
+    int nn = 0, ndel = 0;
+    cJSON *queue = NULL, *body = NULL, *r = NULL;
     int fd = mpd_connect();
     if (fd < 0) { logm(0, "волна: нет связи с MPD"); goto done; }
-    buf_t st = {0}, pl = {0};
     if (mpd_cmd(fd, "status", &st)) goto close_mpd;
     long len = kv_long(st.p, "playlistlength"), song = kv_long(st.p, "song");
     if (len < 0 || song < 0) goto close_mpd;
-    if (len - song - 1 >= WAVE_LOW) goto close_mpd;
+    if (!w->refresh && len - song - 1 >= WAVE_LOW) goto close_mpd;
 
-    /* что уже в очереди от этой волны — чтобы сервер не повторял */
-    cJSON *queue = cJSON_CreateArray();
-    if (!mpd_cmd(fd, "playlistinfo", &pl)) {
+    /* после текущей: при пропуске — невыслушанное волны вон, остальное — чтобы не добавить повтор */
+    next = calloc((size_t)len + 1, sizeof *next);
+    if (next && !mpd_cmd(fd, "playlistinfo", &pl)) {
+        char tid[32] = "";
+        int wave = 0;
+        long pos = -1;
+        bput(&del, "command_list_begin\n");
         for (char *line = pl.p; line && *line; ) {
             char *nl = strchr(line, '\n');
             if (nl) *nl = 0;
-            if (!strncmp(line, "file: ", 6) && strstr(line, "/track/")) {
-                char *t = strstr(line, "/track/") + 7, *qm = strchr(line, '?');
-                char tid[32] = "", aid[32] = "";
+            if (!strncmp(line, "file: ", 6)) {
+                char *t = strstr(line, "/track/"), *qm = strchr(line, '?');
                 size_t i = 0;
-                while (isdigit((unsigned char)*t) && i + 1 < sizeof tid) tid[i++] = *t++;
+                for (t = t ? t + 7 : NULL; t && isdigit((unsigned char)*t) && i + 1 < sizeof tid; ) tid[i++] = *t++;
                 tid[i] = 0;
-                if (qm) query_get(qm + 1, "a", aid, sizeof aid);
-                if (tid[0]) {
-                    char id[80];
-                    snprintf(id, sizeof id, "%s%s%s", tid, aid[0] ? ":" : "", aid);
-                    cJSON_AddItemToArray(queue, cJSON_CreateString(id));
+                wave = qm && strstr(qm, "&w=");
+            } else if (!strncmp(line, "Pos: ", 5)) {
+                pos = strtol(line + 5, NULL, 10);
+            } else if (!strncmp(line, "Id: ", 4) && pos > song) {
+                if (w->refresh && wave) {
+                    bput(&del, "deleteid ");
+                    bput(&del, line + 4);
+                    bput(&del, "\n");
+                    ndel++;
+                } else if (tid[0] && nn < len) {
+                    snprintf(next[nn++], sizeof next[0], "%s", tid);
                 }
             }
             line = nl ? nl + 1 : NULL;
         }
     }
-    while (cJSON_GetArraySize(queue) > 30) cJSON_DeleteItemFromArray(queue, 0);
+    if (ndel) {
+        bput(&del, "command_list_end");
+        mpd_cmd(fd, del.p, NULL);
+        len -= ndel;
+        logm(1, "волна: пропуск, из очереди убрано %d", ndel);
+    }
+    if (len - song - 1 >= WAVE_LOW) goto close_mpd;
+
+    /* сыгранное до текущего включительно — как queue у приложения */
+    queue = cJSON_CreateArray();
+    for (int i = 0; i < w->hn; i++) cJSON_AddItemToArray(queue, cJSON_CreateString(w->hist[i]));
 
     char path[300];
-    cJSON *body = cJSON_CreateObject();
+    body = cJSON_CreateObject();
     cJSON_AddItemReferenceToObject(body, "queue", queue);
     char *esid = url_esc(w->sid);
     snprintf(path, sizeof path, "/rotor/session/%s/tracks", esid);
     free(esid);
     char *bs = cJSON_PrintUnformatted(body);
-    cJSON *r = api_json("POST", path, ANDROID_CLIENT, bs);
+    r = api_json("POST", path, ANDROID_CLIENT, bs);
     free(bs);
     cJSON *res = cJSON_GetObjectItem(r, "result");
     if (!res || cJSON_IsTrue(cJSON_GetObjectItem(res, "unknownSession")) ||
@@ -1493,9 +1564,13 @@ static void *wave_thread(void *arg)
     qlist_t ql = {0};
     cJSON *it;
     cJSON_ArrayForEach(it, cJSON_GetObjectItem(res, "sequence")) ql_push(&ql, cJSON_GetObjectItem(it, "track"));
+    /* уже игранное и уже стоящее в очереди — мимо; если там одни повторы — лучше они, чем тишина */
     int m = 0;
-    for (int i = 0; i < ql.n; i++) if (ql.v[i].ok) ql.v[m++] = ql.v[i];
-    logm(1, "волна: +%d в очередь", mpd_add_tracks(fd, ql.v, m, wq));
+    for (int pass = 0; pass < 2 && !m; pass++)
+        for (int i = 0; i < ql.n; i++)
+            if (ql.v[i].ok && (pass || !(id_in(w->hist, w->hn, ql.v[i].tid) || id_in(next, nn, ql.v[i].tid))))
+                ql.v[m++] = ql.v[i];
+    logm(1, "волна: +%d в очередь (прислано %d)", mpd_add_tracks(fd, ql.v, m, wq), ql.n);
     free(ql.v);
     /* очередь не растёт бесконечно: сыгранное старше 20 треков убрать */
     if (song > 40) {
@@ -1503,13 +1578,13 @@ static void *wave_thread(void *arg)
         snprintf(cmd, sizeof cmd, "delete 0:%ld", song - 20);
         mpd_cmd(fd, cmd, NULL);
     }
+close_mpd:
+    close(fd);
+done:
     cJSON_Delete(r);
     cJSON_Delete(body);
     cJSON_Delete(queue);
-close_mpd:
-    free(st.p); free(pl.p);
-    close(fd);
-done:
+    free(st.p); free(pl.p); free(del.p); free(next);
     pthread_mutex_unlock(&g_wave_lock);
     free(w);
     return NULL;
@@ -1570,17 +1645,65 @@ static void prefetch_next(const char *tid)
     pthread_attr_destroy(&at);
 }
 
+/* MPD открыл поток трека волны: отзыв об уходе с прошлого, trackStarted, подкачка */
 static void wave_hook_start(const char *query, const char *tid)
 {
-    char sid[160];
+    char sid[160], aid[32], d[32], p[300];
     if (!query || !query_get(query, "w", sid, sizeof sid) || !sid[0]) return;
     wave_t *w = calloc(1, sizeof *w);
     if (!w) return;
     snprintf(w->sid, sizeof w->sid, "%s", sid);
-    snprintf(w->tid, sizeof w->tid, "%s", tid);
     query_get(query, "b", w->batch, sizeof w->batch);
     query_get(query, "s", w->seed, sizeof w->seed);
-    query_get(query, "a", w->aid, sizeof w->aid);
+    query_get(query, "a", aid, sizeof aid);
+    snprintf(w->id, sizeof w->id, "%s%s%s", tid, aid[0] ? ":" : "", aid);
+    snprintf(p, sizeof p, "%s/%s.dur", g_cover_d, tid);
+    read_small_file(p, d, sizeof d);
+    double dur = strtod(d, NULL), now = mono_now();
+
+    pthread_mutex_lock(&g_wv_mx);
+    if (!strcmp(g_wv.cur, w->id)) {                  /* тот же трек открыт заново (стоп / игра) */
+        pthread_mutex_unlock(&g_wv_mx);
+        free(w);
+        return;
+    }
+    if (g_wv.cur[0]) {
+        double played = now - g_wv.cur_t, len = g_wv.cur_dur;
+        int k = g_wv.mark && now - g_wv.mark_t < 15 ? g_wv.mark : WV_NONE;
+        snprintf(w->prev, sizeof w->prev, "%s", g_wv.cur);
+        snprintf(w->prev_sid, sizeof w->prev_sid, "%s", g_wv.cur_sid);
+        snprintf(w->prev_batch, sizeof w->prev_batch, "%s", g_wv.cur_batch);
+        if (k != WV_NONE) {                          /* next / prev / play pos / dislike */
+            w->prev_type = k == WV_DISLIKE ? NULL : "skip";   /* за dislike отзыв уже ушёл */
+            w->prev_played = g_wv.mark_played;
+            w->refresh = k != WV_BACK;
+        } else if (len <= 0 || played >= len * 0.8 || played >= len - 40) {
+            /* MPD открывает следующий поток заранее, на размер буфера, — отсюда запас */
+            w->prev_type = "trackFinished";
+            w->prev_played = len > 0 ? len : played;
+            w->prev_len = len;
+        } else {                                     /* пропуск мимо нас (другой клиент MPD) */
+            w->prev_type = "skip";
+            w->prev_played = played;
+        }
+    }
+    snprintf(g_wv.cur, sizeof g_wv.cur, "%s", w->id);
+    snprintf(g_wv.cur_sid, sizeof g_wv.cur_sid, "%s", w->sid);
+    snprintf(g_wv.cur_batch, sizeof g_wv.cur_batch, "%s", w->batch);
+    g_wv.cur_dur = dur;
+    g_wv.cur_t = now;
+    g_wv.mark = WV_NONE;
+    if (!id_in(g_wv.hist, g_wv.hn, tid)) {
+        if (g_wv.hn == WAVE_HIST) {
+            memmove(g_wv.hist, g_wv.hist + 1, (WAVE_HIST - 1) * sizeof g_wv.hist[0]);
+            g_wv.hn--;
+        }
+        snprintf(g_wv.hist[g_wv.hn++], sizeof g_wv.hist[0], "%s", w->id);
+    }
+    memcpy(w->hist, g_wv.hist, (size_t)g_wv.hn * sizeof g_wv.hist[0]);
+    w->hn = g_wv.hn;
+    pthread_mutex_unlock(&g_wv_mx);
+
     pthread_t th;
     pthread_attr_t at;
     pthread_attr_init(&at);
@@ -1588,6 +1711,57 @@ static void wave_hook_start(const char *query, const char *tid)
     pthread_attr_setstacksize(&at, 256 * 1024);
     if (pthread_create(&th, &at, wave_thread, w)) free(w);
     pthread_attr_destroy(&at);
+}
+
+/* текущая песня MPD — трек волны, о котором знает хук */
+typedef struct { char id[80], sid[160], batch[160]; double played; long song; } wcur_t;
+
+static int wave_cur(int fd, wcur_t *c)
+{
+    char tid[32];
+    buf_t st = {0};
+    memset(c, 0, sizeof *c);
+    c->song = -1;
+    if (!mpd_cmd(fd, "status", &st) && st.p) {
+        c->song = kv_long(st.p, "song");
+        c->played = kv_num(st.p, "elapsed");
+    }
+    free(st.p);
+    if (c->song < 0 || !queue_tid(fd, c->song, tid, sizeof tid)) return 0;
+    pthread_mutex_lock(&g_wv_mx);
+    int ok = g_wv.cur[0] && id_in(&g_wv.cur, 1, tid);
+    if (ok) {
+        snprintf(c->id, sizeof c->id, "%s", g_wv.cur);
+        snprintf(c->sid, sizeof c->sid, "%s", g_wv.cur_sid);
+        snprintf(c->batch, sizeof c->batch, "%s", g_wv.cur_batch);
+    }
+    pthread_mutex_unlock(&g_wv_mx);
+    return ok;
+}
+
+/* уходим с трека через наш API: хук следующего пошлёт skip с этим временем, а не trackFinished */
+static void wave_mark(const wcur_t *c, int kind)
+{
+    pthread_mutex_lock(&g_wv_mx);
+    if (kind != WV_NONE && c->id[0] && !strcmp(g_wv.cur, c->id)) {
+        g_wv.mark = kind;
+        g_wv.mark_played = c->played;
+        g_wv.mark_t = mono_now();
+    }
+    pthread_mutex_unlock(&g_wv_mx);
+}
+
+/* очередь заменяют (/queue, /wave): треку волны — skip, как приложение при смене контекста;
+ * история волны — заново */
+static void wave_leave(void)
+{
+    wcur_t c;
+    int fd = mpd_connect(), wv = fd >= 0 && wave_cur(fd, &c);
+    if (fd >= 0) close(fd);
+    if (wv) rotor_feedback(c.sid, c.batch, "skip", c.id, c.played, 0);
+    pthread_mutex_lock(&g_wv_mx);
+    memset(&g_wv, 0, sizeof g_wv);
+    pthread_mutex_unlock(&g_wv_mx);
 }
 
 /* ---------- API для клиентов (приложение на ПК) ---------- */
@@ -2038,6 +2212,7 @@ static void h_queue_post(req_t *r)
     free(ids);
     int s = 0;
     for (int i = 0; i < ql.n; i++) if (!strcmp(ql.v[i].tid, want)) { s = i; break; }
+    if (!append) wave_leave();
     int k = queue_play(ql.v, ql.n, s, append, NULL, err, sizeof err);
     free(ql.v);
     if (k < 0) { send_fail(r->fd, strstr(err, "MPD") ? 503 : 400, err); return; }
@@ -2049,7 +2224,7 @@ static void h_queue_post(req_t *r)
 /* «Моя волна» (seed=user:onyourwave) или станция / альбом / исполнитель (seed из ответов) */
 static void h_wave(req_t *r)
 {
-    char seed[160] = "", err[300], sid[160] = "", batch[160] = "", path[300], ts[40];
+    char seed[160] = "", err[300], sid[160] = "", batch[160] = "";
     if (!prm(r, "seed", seed, sizeof seed) || !seed[0]) snprintf(seed, sizeof seed, "user:onyourwave");
     size_t sl = strlen(seed);
     int good = sl >= 3 && sl <= 120;
@@ -2075,19 +2250,8 @@ static void h_wave(req_t *r)
         send_fail(r->fd, 502, res ? "волна не запустилась (нужна подписка Плюс?)" : err);
         return;
     }
-    b = cJSON_CreateObject();
-    cJSON *ev = cJSON_AddObjectToObject(b, "event");
-    iso_now(ts, sizeof ts);
-    cJSON_AddStringToObject(ev, "type", "radioStarted");
-    cJSON_AddStringToObject(ev, "timestamp", ts);
-    cJSON_AddStringToObject(b, "batchId", batch);
-    bs = cJSON_PrintUnformatted(b);
-    cJSON_Delete(b);
-    char *esid = url_esc(sid);
-    snprintf(path, sizeof path, "/rotor/session/%s/feedback", esid);
-    free(esid);
-    cJSON_Delete(api_json("POST", path, ANDROID_CLIENT, bs));
-    free(bs);
+    wave_leave();
+    rotor_feedback(sid, NULL, "radioStarted", NULL, -1, 0);   /* как приложение: без batchId */
     char wq[800];
     wave_query(wq, sizeof wq, sid, batch, seed);
     int k = queue_play(ql.v, ql.n, 0, 0, wq, err, sizeof err);
@@ -2117,9 +2281,17 @@ static void h_like(req_t *r)
     free(b.p);
     cJSON_Delete(root);
     if (!res) { send_fail(r->fd, 502, err); return; }
-    if (!like) {
-        int fd = mpd_connect();
-        if (fd >= 0) { mpd_cmd(fd, "next", NULL); close(fd); }
+    int fd = mpd_connect();
+    if (fd >= 0) {
+        /* играющий трек волны — отзыв и в её сессию, как в приложении */
+        wcur_t wc;
+        int wv = wave_cur(fd, &wc), cur = wv && id_in(&wc.id, 1, id);
+        if (cur) rotor_feedback(wc.sid, wc.batch, like ? "like" : "dislike", wc.id, like ? -1 : wc.played, 0);
+        if (!like) {
+            if (wv) wave_mark(&wc, cur ? WV_DISLIKE : WV_FWD);
+            mpd_cmd(fd, "next", NULL);
+        }
+        close(fd);
     }
     send_ok(r->fd, NULL);
 }
@@ -2139,6 +2311,7 @@ static void h_ctl(req_t *r)
 {
     const char *c = r->path + 1;
     char cmd[48], v[16];
+    long to = -1;                                    /* play pos */
     int fd = mpd_connect();
     if (fd < 0) { send_fail(r->fd, 503, "MPD не отвечает"); return; }
     if (!strcmp(c, "toggle")) {
@@ -2148,8 +2321,12 @@ static void h_ctl(req_t *r)
         free(st.p);
         snprintf(cmd, sizeof cmd, "%s", strcmp(v, "play") ? "play" : "pause 1");
     } else if (!strcmp(c, "play")) {
-        if (prm(r, "pos", v, sizeof v) && all_digits(v)) snprintf(cmd, sizeof cmd, "play %s", v);
-        else snprintf(cmd, sizeof cmd, "play");
+        if (prm(r, "pos", v, sizeof v) && all_digits(v)) {
+            snprintf(cmd, sizeof cmd, "play %s", v);
+            to = strtol(v, NULL, 10);
+        } else {
+            snprintf(cmd, sizeof cmd, "play");
+        }
     } else if (!strcmp(c, "seek")) {
         /* t — с начала трека, d — от текущего места (+ в адресе — %2B, но и без знака вперёд) */
         if (prm(r, "t", v, sizeof v) && secs_ok(v, 0)) {
@@ -2163,6 +2340,13 @@ static void h_ctl(req_t *r)
         }
     } else {
         snprintf(cmd, sizeof cmd, "%s", !strcmp(c, "prev") ? "previous" : !strcmp(c, "pause") ? "pause 1" : c);
+    }
+    /* уход с трека волны: хук следующего пошлёт skip, а вперёд — ещё и свежую партию */
+    int kind = !strcmp(c, "next") ? WV_FWD : !strcmp(c, "prev") ? WV_BACK : WV_NONE;
+    wcur_t wc;
+    if ((kind != WV_NONE || to >= 0) && wave_cur(fd, &wc)) {
+        if (to >= 0) kind = to > wc.song ? WV_FWD : to < wc.song ? WV_BACK : WV_NONE;
+        wave_mark(&wc, kind);
     }
     buf_t res = {0};
     int rc = mpd_cmd(fd, cmd, &res);
