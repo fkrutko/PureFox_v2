@@ -20,7 +20,9 @@
  *       Для треков «Моей волны» (w=...) — отзывы как у приложения (trackStarted, при уходе
  *       с прошлого trackFinished или skip со временем прослушивания) и подкачка следующей
  *       партии в очередь MPD, когда до конца очереди остаётся меньше 3 треков или трек
- *       пропущен вперёд (тогда невыслушанное волны из очереди убирается).
+ *       пропущен вперёд (тогда невыслушанное волны в очереди меняется на свежую партию).
+ *       Смену трека ловит сторож MPD (idle player), а не открытие потока: MPD открывает
+ *       следующий заранее, на размер буфера.
  *
  * Играть начинает MPD: если активен другой плеер, /queue и /wave переключают на MPD
  * через handle_service.php, как кнопка «Яндекс Музыка» на главной.
@@ -34,6 +36,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -615,7 +618,6 @@ static int cdn_fetch(stream_t *s, const finfo_t *fi, long long from)
     return -1;
 }
 
-static void wave_hook_start(const char *query, const char *tid);
 static void prefetch_next(const char *tid);
 
 /* формат, который на самом деле отдаёт CDN (flac, mp3...): для «сейчас играет» */
@@ -751,7 +753,7 @@ static void pre_fill(const char *tid)
     free(b.p);
 }
 
-static void serve_track(int fd, const char *method, const char *path, const char *query, const char *range)
+static void serve_track(int fd, const char *method, const char *path, const char *range)
 {
     /* /track/<id>.<ext> */
     char tid[32] = {0};
@@ -778,11 +780,8 @@ static void serve_track(int fd, const char *method, const char *path, const char
         }
     }
 
-    /* «Моя волна»: отзыв и подкачка — как только MPD начал трек (не при перемотке) */
-    if (!s.head_only && (!s.ranged || s.req_start == 0)) {
-        wave_hook_start(query, tid);
-        prefetch_next(tid);
-    }
+    /* MPD начал трек (не перемотка) — соседей заранее */
+    if (!s.head_only && (!s.ranged || s.req_start == 0)) prefetch_next(tid);
 
     finfo_t fi;
     char err[300];
@@ -1166,10 +1165,9 @@ static int mpd_up(void)
     return 1;
 }
 
-/* команда; ответ до OK/ACK в out (может быть NULL). 0 — OK */
-static int mpd_cmd(int fd, const char *cmd, buf_t *out)
+/* ответ MPD до OK/ACK в out (может быть NULL); cmd — для лога. 0 — OK */
+static int mpd_read(int fd, const char *cmd, buf_t *out)
 {
-    if (send_all(fd, cmd, strlen(cmd)) || send_all(fd, "\n", 1)) return -1;
     buf_t tmp = {0};
     buf_t *b = out ? out : &tmp;
     char rb[4096];
@@ -1188,6 +1186,13 @@ static int mpd_cmd(int fd, const char *cmd, buf_t *out)
     }
     free(tmp.p);
     return rc;
+}
+
+/* команда; ответ до OK/ACK в out (может быть NULL). 0 — OK */
+static int mpd_cmd(int fd, const char *cmd, buf_t *out)
+{
+    if (send_all(fd, cmd, strlen(cmd)) || send_all(fd, "\n", 1)) return -1;
+    return mpd_read(fd, cmd, out);
 }
 
 static void mpd_quote(char *dst, size_t sz, const char *src)
@@ -1406,20 +1411,20 @@ enum { WV_NONE, WV_FWD, WV_BACK, WV_DISLIKE };       /* как ушли с тр�
 
 /* что играет в волне и что уже сыграно — под g_wv_mx */
 static struct {
+    long songid;                                     /* текущая песня MPD — по сторожу */
+    double pos, pos_t;                               /* её место при последнем событии и когда */
+    int playing;
     char hist[WAVE_HIST][80];                        /* id[:альбом], старые первыми */
     int hn;
-    char cur[80], cur_sid[160], cur_batch[160];      /* текущий трек волны */
-    double cur_dur, cur_t;                           /* длительность; когда MPD открыл поток */
+    char cur[80], cur_sid[160], cur_batch[160];      /* songid — трек волны; иначе cur пусто */
+    double cur_dur;
     int mark;                                        /* WV_*: ушли с cur через API */
     double mark_played, mark_t;
-} g_wv;
+} g_wv = { .songid = -2 };
 static pthread_mutex_t g_wv_mx = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
-    char sid[160], batch[160], seed[160], id[80];
-    char prev[80], prev_sid[160], prev_batch[160];   /* трек, с которого ушли */
-    const char *prev_type;                           /* NULL — об уходе не сообщать */
-    double prev_played, prev_len;
+    char sid[160], batch[160], seed[160];
     int refresh;                                     /* пропуск вперёд: свежая партия сейчас */
     char hist[WAVE_HIST][80];
     int hn;
@@ -1474,8 +1479,6 @@ static void wave_query(char *out, size_t sz, const char *sid, const char *batch,
 static void *wave_thread(void *arg)
 {
     wave_t *w = arg;
-    if (w->prev_type) rotor_feedback(w->prev_sid, w->prev_batch, w->prev_type, w->prev, w->prev_played, w->prev_len);
-    rotor_feedback(w->sid, w->batch, "trackStarted", w->id, -1, 0);
     pthread_mutex_lock(&g_wave_lock);
 
     buf_t st = {0}, pl = {0}, del = {0};
@@ -1489,7 +1492,7 @@ static void *wave_thread(void *arg)
     if (len < 0 || song < 0) goto close_mpd;
     if (!w->refresh && len - song - 1 >= WAVE_LOW) goto close_mpd;
 
-    /* после текущей: при пропуске — невыслушанное волны вон, остальное — чтобы не добавить повтор */
+    /* после текущей: при пропуске невыслушанное волны уйдёт, остальное — чтобы не добавить повтор */
     next = calloc((size_t)len + 1, sizeof *next);
     if (next && !mpd_cmd(fd, "playlistinfo", &pl)) {
         char tid[32] = "";
@@ -1520,13 +1523,12 @@ static void *wave_thread(void *arg)
             line = nl ? nl + 1 : NULL;
         }
     }
-    if (ndel) {
-        bput(&del, "command_list_end");
-        mpd_cmd(fd, del.p, NULL);
-        len -= ndel;
-        logm(1, "волна: пропуск, из очереди убрано %d", ndel);
+    bput(&del, "command_list_end");
+    /* невыслушанное убираем, только когда есть чем заменить: не ответил сервер — играет старое */
+    if (len - ndel - song - 1 >= WAVE_LOW) {
+        if (ndel && !mpd_cmd(fd, del.p, NULL)) logm(1, "волна: пропуск, из очереди убрано %d", ndel);
+        goto close_mpd;
     }
-    if (len - song - 1 >= WAVE_LOW) goto close_mpd;
 
     /* сыгранное до текущего включительно — как queue у приложения */
     queue = cJSON_CreateArray();
@@ -1570,7 +1572,9 @@ static void *wave_thread(void *arg)
         for (int i = 0; i < ql.n; i++)
             if (ql.v[i].ok && (pass || !(id_in(w->hist, w->hn, ql.v[i].tid) || id_in(next, nn, ql.v[i].tid))))
                 ql.v[m++] = ql.v[i];
-    logm(1, "волна: +%d в очередь (прислано %d)", mpd_add_tracks(fd, ql.v, m, wq), ql.n);
+    if (ndel && !m) logm(0, "волна: свежей партии нет, очередь как была");
+    else if (ndel && !mpd_cmd(fd, del.p, NULL)) logm(1, "волна: пропуск, из очереди убрано %d", ndel);
+    if (m) logm(1, "волна: +%d в очередь (прислано %d)", mpd_add_tracks(fd, ql.v, m, wq), ql.n);
     free(ql.v);
     /* очередь не растёт бесконечно: сыгранное старше 20 треков убрать */
     if (song > 40) {
@@ -1645,65 +1649,80 @@ static void prefetch_next(const char *tid)
     pthread_attr_destroy(&at);
 }
 
-/* MPD открыл поток трека волны: отзыв об уходе с прошлого, trackStarted, подкачка */
-static void wave_hook_start(const char *query, const char *tid)
+/* сменилась текущая песня MPD (songid, file — её адрес, пусто — песни нет): отзыв об уходе
+ * с прошлого трека волны, trackStarted новому, подкачка. el, playing, now — её status */
+static void wave_song(long songid, const char *file, double dur, double el, int playing, double now)
 {
-    char sid[160], aid[32], d[32], p[300];
-    if (!query || !query_get(query, "w", sid, sizeof sid) || !sid[0]) return;
+    char tid[32] = "", aid[32] = "", id[80] = "", p[300], d[32];
+    char prev[80] = "", psid[160] = "", pbatch[160] = "";
+    const char *ptype = NULL;                        /* NULL — об уходе не сообщать */
+    double pplayed = -1, plen = 0;
     wave_t *w = calloc(1, sizeof *w);
     if (!w) return;
-    snprintf(w->sid, sizeof w->sid, "%s", sid);
-    query_get(query, "b", w->batch, sizeof w->batch);
-    query_get(query, "s", w->seed, sizeof w->seed);
-    query_get(query, "a", aid, sizeof aid);
-    snprintf(w->id, sizeof w->id, "%s%s%s", tid, aid[0] ? ":" : "", aid);
-    snprintf(p, sizeof p, "%s/%s.dur", g_cover_d, tid);
-    read_small_file(p, d, sizeof d);
-    double dur = strtod(d, NULL), now = mono_now();
+    const char *t = strstr(file, "/track/"), *qm = strchr(file, '?');
+    size_t i = 0;
+    for (t = t ? t + 7 : NULL; t && isdigit((unsigned char)*t) && i + 1 < sizeof tid; ) tid[i++] = *t++;
+    tid[i] = 0;
+    int wave = tid[0] && qm && query_get(qm + 1, "w", w->sid, sizeof w->sid) && w->sid[0];
+    if (wave) {
+        query_get(qm + 1, "b", w->batch, sizeof w->batch);
+        query_get(qm + 1, "s", w->seed, sizeof w->seed);
+        query_get(qm + 1, "a", aid, sizeof aid);
+        snprintf(id, sizeof id, "%s%s%s", tid, aid[0] ? ":" : "", aid);
+        if (dur <= 0) {                              /* MPD ещё не знает длину потока */
+            snprintf(p, sizeof p, "%s/%s.dur", g_cover_d, tid);
+            if (!read_small_file(p, d, sizeof d)) dur = strtod(d, NULL);
+        }
+    }
 
     pthread_mutex_lock(&g_wv_mx);
-    if (!strcmp(g_wv.cur, w->id)) {                  /* тот же трек открыт заново (стоп / игра) */
-        pthread_mutex_unlock(&g_wv_mx);
-        free(w);
-        return;
-    }
     if (g_wv.cur[0]) {
-        double played = now - g_wv.cur_t, len = g_wv.cur_dur;
+        /* место прошлой при смене: последнее известное плюс время игры с тех пор (паузы — мимо) */
+        double len = g_wv.cur_dur, pos = g_wv.pos + (g_wv.playing ? now - g_wv.pos_t : 0);
         int k = g_wv.mark && now - g_wv.mark_t < 15 ? g_wv.mark : WV_NONE;
-        snprintf(w->prev, sizeof w->prev, "%s", g_wv.cur);
-        snprintf(w->prev_sid, sizeof w->prev_sid, "%s", g_wv.cur_sid);
-        snprintf(w->prev_batch, sizeof w->prev_batch, "%s", g_wv.cur_batch);
+        snprintf(prev, sizeof prev, "%s", g_wv.cur);
+        snprintf(psid, sizeof psid, "%s", g_wv.cur_sid);
+        snprintf(pbatch, sizeof pbatch, "%s", g_wv.cur_batch);
         if (k != WV_NONE) {                          /* next / prev / play pos / dislike */
-            w->prev_type = k == WV_DISLIKE ? NULL : "skip";   /* за dislike отзыв уже ушёл */
-            w->prev_played = g_wv.mark_played;
+            ptype = k == WV_DISLIKE ? NULL : "skip"; /* за dislike отзыв уже ушёл */
+            pplayed = g_wv.mark_played;
             w->refresh = k != WV_BACK;
-        } else if (len <= 0 || played >= len * 0.8 || played >= len - 40) {
-            /* MPD открывает следующий поток заранее, на размер буфера, — отсюда запас */
-            w->prev_type = "trackFinished";
-            w->prev_played = len > 0 ? len : played;
-            w->prev_len = len;
+        } else if (len <= 0 || pos >= len - 5) {
+            ptype = "trackFinished";
+            pplayed = len > 0 ? len : pos;
+            plen = len;
         } else {                                     /* пропуск мимо нас (другой клиент MPD) */
-            w->prev_type = "skip";
-            w->prev_played = played;
+            ptype = "skip";
+            pplayed = pos;
         }
     }
-    snprintf(g_wv.cur, sizeof g_wv.cur, "%s", w->id);
-    snprintf(g_wv.cur_sid, sizeof g_wv.cur_sid, "%s", w->sid);
-    snprintf(g_wv.cur_batch, sizeof g_wv.cur_batch, "%s", w->batch);
-    g_wv.cur_dur = dur;
-    g_wv.cur_t = now;
+    g_wv.songid = songid;
+    g_wv.pos = el;
+    g_wv.pos_t = now;
+    g_wv.playing = playing;
+    g_wv.cur[0] = 0;
     g_wv.mark = WV_NONE;
-    if (!id_in(g_wv.hist, g_wv.hn, tid)) {
-        if (g_wv.hn == WAVE_HIST) {
-            memmove(g_wv.hist, g_wv.hist + 1, (WAVE_HIST - 1) * sizeof g_wv.hist[0]);
-            g_wv.hn--;
+    if (wave) {
+        snprintf(g_wv.cur, sizeof g_wv.cur, "%s", id);
+        snprintf(g_wv.cur_sid, sizeof g_wv.cur_sid, "%s", w->sid);
+        snprintf(g_wv.cur_batch, sizeof g_wv.cur_batch, "%s", w->batch);
+        g_wv.cur_dur = dur;
+        if (!id_in(g_wv.hist, g_wv.hn, tid)) {
+            if (g_wv.hn == WAVE_HIST) {
+                memmove(g_wv.hist, g_wv.hist + 1, (WAVE_HIST - 1) * sizeof g_wv.hist[0]);
+                g_wv.hn--;
+            }
+            snprintf(g_wv.hist[g_wv.hn++], sizeof g_wv.hist[0], "%s", id);
         }
-        snprintf(g_wv.hist[g_wv.hn++], sizeof g_wv.hist[0], "%s", w->id);
+        memcpy(w->hist, g_wv.hist, (size_t)g_wv.hn * sizeof g_wv.hist[0]);
+        w->hn = g_wv.hn;
     }
-    memcpy(w->hist, g_wv.hist, (size_t)g_wv.hn * sizeof g_wv.hist[0]);
-    w->hn = g_wv.hn;
     pthread_mutex_unlock(&g_wv_mx);
 
+    /* отзывы — здесь, по порядку; подкачка — в своём потоке */
+    if (ptype) rotor_feedback(psid, pbatch, ptype, prev, pplayed, plen);
+    if (!wave) { free(w); return; }
+    rotor_feedback(w->sid, w->batch, "trackStarted", id, -1, 0);
     pthread_t th;
     pthread_attr_t at;
     pthread_attr_init(&at);
@@ -1713,23 +1732,67 @@ static void wave_hook_start(const char *query, const char *tid)
     pthread_attr_destroy(&at);
 }
 
-/* текущая песня MPD — трек волны, о котором знает хук */
+/* Сторож MPD: status после каждого события плеера (смена песни, пауза, перемотка) —
+ * трек волны начат, когда MPD его заиграл, а не когда заранее открыл поток */
+static void *wave_watch(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        int fd = mpd_connect();
+        if (fd < 0) { sleep(5); continue; }
+        struct timeval tv = { 70, 0 };               /* idle ждёт до 60 с, затем noidle */
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        for (;;) {
+            buf_t st = {0}, cs = {0};
+            char state[16] = "", file[1200] = "";
+            if (mpd_cmd(fd, "status", &st) || !st.p) { free(st.p); break; }
+            double now = mono_now(), el = kv_num(st.p, "elapsed"), dur = kv_num(st.p, "duration");
+            long songid = kv_long(st.p, "songid");
+            kv_str(st.p, "state", state, sizeof state);
+            free(st.p);
+            int playing = !strcmp(state, "play");
+            pthread_mutex_lock(&g_wv_mx);
+            int changed = songid != g_wv.songid;
+            if (!changed) {
+                g_wv.pos = el;
+                g_wv.pos_t = now;
+                g_wv.playing = playing;
+            }
+            pthread_mutex_unlock(&g_wv_mx);
+            if (changed) {
+                if (songid >= 0 && !mpd_cmd(fd, "currentsong", &cs) && cs.p) kv_str(cs.p, "file", file, sizeof file);
+                free(cs.p);
+                wave_song(songid, file, dur, el, playing, now);
+                continue;                            /* пока шли отзывы, могло смениться ещё */
+            }
+            if (send_all(fd, "idle player\n", 12)) break;
+            struct pollfd pf = { .fd = fd, .events = POLLIN };
+            if (poll(&pf, 1, 60000) == 0 && send_all(fd, "noidle\n", 7)) break;
+            if (mpd_read(fd, "idle player", NULL)) break;
+        }
+        close(fd);
+        sleep(1);
+    }
+    return NULL;
+}
+
+/* текущая песня MPD — трек волны, о котором знает сторож */
 typedef struct { char id[80], sid[160], batch[160]; double played; long song; } wcur_t;
 
 static int wave_cur(int fd, wcur_t *c)
 {
-    char tid[32];
     buf_t st = {0};
+    long songid = -1;
     memset(c, 0, sizeof *c);
     c->song = -1;
     if (!mpd_cmd(fd, "status", &st) && st.p) {
         c->song = kv_long(st.p, "song");
+        songid = kv_long(st.p, "songid");
         c->played = kv_num(st.p, "elapsed");
     }
     free(st.p);
-    if (c->song < 0 || !queue_tid(fd, c->song, tid, sizeof tid)) return 0;
     pthread_mutex_lock(&g_wv_mx);
-    int ok = g_wv.cur[0] && id_in(&g_wv.cur, 1, tid);
+    int ok = songid >= 0 && songid == g_wv.songid && g_wv.cur[0];
     if (ok) {
         snprintf(c->id, sizeof c->id, "%s", g_wv.cur);
         snprintf(c->sid, sizeof c->sid, "%s", g_wv.cur_sid);
@@ -1739,7 +1802,7 @@ static int wave_cur(int fd, wcur_t *c)
     return ok;
 }
 
-/* уходим с трека через наш API: хук следующего пошлёт skip с этим временем, а не trackFinished */
+/* уходим с трека через наш API: сторож при смене пошлёт skip с этим временем, а не trackFinished */
 static void wave_mark(const wcur_t *c, int kind)
 {
     pthread_mutex_lock(&g_wv_mx);
@@ -1759,8 +1822,10 @@ static void wave_leave(void)
     int fd = mpd_connect(), wv = fd >= 0 && wave_cur(fd, &c);
     if (fd >= 0) close(fd);
     if (wv) rotor_feedback(c.sid, c.batch, "skip", c.id, c.played, 0);
-    pthread_mutex_lock(&g_wv_mx);
-    memset(&g_wv, 0, sizeof g_wv);
+    pthread_mutex_lock(&g_wv_mx);                    /* songid и место — сторожу, как были */
+    g_wv.hn = 0;
+    g_wv.cur[0] = 0;
+    g_wv.mark = WV_NONE;
     pthread_mutex_unlock(&g_wv_mx);
 }
 
@@ -2341,7 +2406,7 @@ static void h_ctl(req_t *r)
     } else {
         snprintf(cmd, sizeof cmd, "%s", !strcmp(c, "prev") ? "previous" : !strcmp(c, "pause") ? "pause 1" : c);
     }
-    /* уход с трека волны: хук следующего пошлёт skip, а вперёд — ещё и свежую партию */
+    /* уход с трека волны: сторож пошлёт skip, а вперёд — ещё и свежую партию */
     int kind = !strcmp(c, "next") ? WV_FWD : !strcmp(c, "prev") ? WV_BACK : WV_NONE;
     wcur_t wc;
     if ((kind != WV_NONE || to >= 0) && wave_cur(fd, &wc)) {
@@ -2466,7 +2531,7 @@ static void *client_thread(void *arg)
         if (strcmp(method, "GET") && strcmp(method, "HEAD")) { reply_json_err(fd, 400, "method"); goto out; }
         struct timeval tv2 = { 0, 0 };                    /* поток может идти долго */
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv2, sizeof tv2);
-        serve_track(fd, method, target, query, range[0] ? range : NULL);
+        serve_track(fd, method, target, range[0] ? range : NULL);
         goto out;
     }
     if (!strcmp(method, "POST") && clen > 0) {
@@ -2552,6 +2617,8 @@ int main(int argc, char **argv)
     pthread_attr_init(&at);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
     pthread_attr_setstacksize(&at, 512 * 1024);
+    pthread_t wth;
+    if (pthread_create(&wth, &at, wave_watch, NULL)) logm(0, "сторож MPD не запущен");
     for (;;) {
         int fd = accept(ls, NULL, NULL);
         if (fd < 0) { if (errno == EINTR) continue; usleep(100000); continue; }
