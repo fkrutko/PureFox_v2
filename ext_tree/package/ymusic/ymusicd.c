@@ -21,9 +21,10 @@
  * же формата идёт без паузы; начала соседних треков очереди заранее в памяти. Поток ALSA не
  * останавливается ни на паузе, ни при перемотке и смене трека (иначе на I2S гаснут такты и ЦАП
  * потом секунду-другую молчит): несыгранное забирается назад, пустоту заполняет тишина.
- * Для треков «Моей волны» — отзывы как у приложения (trackStarted, при уходе с прошлого
- * trackFinished или skip со временем прослушивания) и подкачка следующей партии в очередь,
- * когда до её конца остаётся меньше 3 треков.
+ * Каждая песня — в историю прослушиваний (/plays в начале и в конце). «Моя волна» — как
+ * десктопное приложение: trackStarted сразу, skip и trackFinished — телом следующего /tracks;
+ * на пропуск вперёд (и когда до конца очереди меньше 3 треков) — свежая партия вместо
+ * невыслушанного волны.
  *
  * Играет, только когда Яндекс Музыка — плеер Фокса (есть /tmp/ymusic/active, его ставит и убирает
  * /etc/rc.pure/S95ymusic). Иначе /queue и /wave переключают Фокс на неё через handle_service.php,
@@ -56,6 +57,7 @@
 #include <FLAC/stream_decoder.h>
 #include <mad.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
 #include <openssl/hmac.h>
 
 #include "cJSON.h"
@@ -1640,7 +1642,8 @@ static int q_idx(long id)
     return -1;
 }
 
-static int q_add(const qtrack_t *v, int n, const char *sid, const char *batch, const char *seed)
+/* n треков в очередь с места at (g_pl.n — в конец) */
+static int q_insert(int at, const qtrack_t *v, int n, const char *sid, const char *batch, const char *seed)
 {
     if (g_pl.n + n > g_pl.cap) {
         int c = g_pl.cap ? g_pl.cap : 64;
@@ -1650,8 +1653,10 @@ static int q_add(const qtrack_t *v, int n, const char *sid, const char *batch, c
         g_pl.q = nq;
         g_pl.cap = c;
     }
+    memmove(g_pl.q + at + n, g_pl.q + at, (size_t)(g_pl.n - at) * sizeof *g_pl.q);
+    g_pl.n += n;
     for (int i = 0; i < n; i++) {
-        qent_t *e = &g_pl.q[g_pl.n++];
+        qent_t *e = &g_pl.q[at + i];
         memset(e, 0, sizeof *e);
         e->t = v[i];
         e->id = g_pl.next_id++;
@@ -1662,6 +1667,11 @@ static int q_add(const qtrack_t *v, int n, const char *sid, const char *batch, c
         }
     }
     return n;
+}
+
+static int q_add(const qtrack_t *v, int n, const char *sid, const char *batch, const char *seed)
+{
+    return q_insert(g_pl.n, v, n, sid, batch, seed);
 }
 
 /* место aud, с */
@@ -2209,32 +2219,49 @@ static cJSON *ent_json(const qent_t *e, int pos)
 }
 
 /* ---------- Моя волна ---------- */
-/* Как приложение Яндекс Музыки: trackStarted в начале трека, при уходе с него — trackFinished
- * (дослушан) или skip (пропущен) со временем прослушивания; queue в запросе партии — сыгранное
- * до текущего включительно (последние WAVE_HIST). Очередь при пропуске не трогаем — как
- * приложение в режиме wave queue: пропуск влияет на следующие партии через отзыв. */
+/* Как десктопное приложение (5.124): trackStarted — сразу в /feedback/; skip и trackFinished
+ * копятся и уходят телом следующего /tracks (queue там — ушедший и текущий), а при уходе из
+ * волны — в /rotor/sessions/feedbacks/. /tracks — на каждый пропуск вперёд и когда до конца
+ * очереди меньше WAVE_LOW; присланная партия заменяет невыслушанное волны после текущей.
+ * Каждая песня (и не из волны) — в историю: /plays в начале и в конце, с одним playId. */
 #define WAVE_HIST       100
 #define WAVE_KEEP       100                                   /* сыгранного в очереди после чистки */
 #define WAVE_KEEP_MAX   300                                   /* чистка, когда сыграно больше */
+#define WAVE_FROM       "desktop-wave_landing_screen-my_wave-radio-default"
+#define PLAY_FROM       "desktop-wave_landing_screen-wheel-default"   /* так приложение — альбом */
 
 enum { WV_NONE, WV_FWD, WV_BACK, WV_DISLIKE };       /* как ушли с трека через наш API */
 
-/* что играет в волне и что уже сыграно — под g_wv_mx */
+/* песня, что звучит, — для /plays и отзывов волны */
+typedef struct {
+    qtrack_t t;                                      /* t.tid пусто — ничего */
+    char sid[160], batch[160], seed[160];            /* sid пусто — не из волны */
+    char pid[40], start[40];                         /* playId; когда началась */
+    double dur;
+} play_t;
+
+/* что звучит и что сыграно в волне — под g_wv_mx */
 static struct {
     long songid;                                     /* что звучит — по сторожу */
     double pos, pos_t;                               /* её место при последнем событии и когда */
     int playing;
     char hist[WAVE_HIST][80];                        /* id[:альбом], старые первыми */
     int hn;
-    char cur[80], cur_sid[160], cur_batch[160];      /* songid — трек волны; иначе cur пусто */
-    double cur_dur;
+    play_t cur;
     int mark;                                        /* WV_*: ушли с cur через API */
     double mark_played, mark_t;
+    cJSON *pend;                                     /* отложенные skip / trackFinished */
+    char pend_sid[160], pend_seed[160];              /* их сессия и сид */
 } g_wv = { .songid = -2 };
 static pthread_mutex_t g_wv_mx = PTHREAD_MUTEX_INITIALIZER;
 
+/* подкачка: queue и отложенные отзывы — в /tracks, партия — в очередь после after */
 typedef struct {
-    char sid[160], batch[160], seed[160];
+    char sid[160], seed[160];
+    char queue[2][80];
+    int qn;
+    cJSON *fb;                                       /* NULL — без feedbacks */
+    long after;
     char hist[WAVE_HIST][80];
     int hn;
 } wave_t;
@@ -2255,26 +2282,154 @@ static int id_in(char (*v)[80], int n, const char *tid)
     return 0;
 }
 
-/* отзыв в сессию волны; played < 0 — без totalPlayedSeconds, len <= 0 — без trackLengthSeconds */
-static void rotor_feedback(const char *sid, const char *batch, const char *type, const char *id,
-                           double played, double len)
+/* id[:альбом] — так треки в rotor */
+static void track_ref(const qtrack_t *t, char *b, size_t sz)
 {
-    char ts[40], path[256];
+    snprintf(b, sz, "%s%s%s", t->tid, t->aid[0] ? ":" : "", t->aid);
+}
+
+static void new_uuid(char *b, size_t sz)
+{
+    unsigned char r[16];
+    if (RAND_bytes(r, sizeof r) != 1)
+        for (size_t i = 0; i < sizeof r; i++) r[i] = (unsigned char)rand();
+    r[6] = (r[6] & 0x0f) | 0x40;
+    r[8] = (r[8] & 0x3f) | 0x80;
+    snprintf(b, sz, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+             r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15]);
+}
+
+static double ms3(double s)
+{
+    return (long long)(s * 1000) / 1000.0;
+}
+
+/* отзыв волны; played < 0 — без totalPlayedSeconds, len <= 0 — без trackLengthSeconds,
+ * без id — radioStarted (у него from ещё и в event) */
+static cJSON *fb_event(const char *batch, const char *type, const char *id, double played, double len)
+{
+    char ts[40];
     iso_now(ts, sizeof ts);
     cJSON *o = cJSON_CreateObject(), *ev = cJSON_AddObjectToObject(o, "event");
     cJSON_AddStringToObject(ev, "type", type);
     cJSON_AddStringToObject(ev, "timestamp", ts);
     if (id && id[0]) cJSON_AddStringToObject(ev, "trackId", id);
-    if (played >= 0) cJSON_AddNumberToObject(ev, "totalPlayedSeconds", (long long)(played * 1000) / 1000.0);
+    else cJSON_AddStringToObject(ev, "from", WAVE_FROM);
+    if (played >= 0) cJSON_AddNumberToObject(ev, "totalPlayedSeconds", ms3(played));
     if (len > 0) cJSON_AddNumberToObject(ev, "trackLengthSeconds", len);
     if (batch && batch[0]) cJSON_AddStringToObject(o, "batchId", batch);
+    cJSON_AddStringToObject(o, "from", WAVE_FROM);
+    return o;
+}
+
+/* отзыв в сессию волны сразу: radioStarted, trackStarted, like, dislike */
+static void rotor_feedback(const char *sid, const char *batch, const char *type, const char *id,
+                           double played, double len)
+{
+    char path[256];
+    cJSON *o = fb_event(batch, type, id, played, len);
     char *body = cJSON_PrintUnformatted(o);
     char *esid = url_esc(sid);
-    snprintf(path, sizeof path, "/rotor/session/%s/feedback", esid);
+    snprintf(path, sizeof path, "/rotor/session/%s/feedback/", esid);
     cJSON_Delete(api_json("POST", path, ANDROID_CLIENT, body));
     if (played >= 0) logm(1, "волна: %s %s (%.0f с)", type, id ? id : "", played);
     else logm(1, "волна: %s %s", type, id ? id : "");
     free(esid); free(body); cJSON_Delete(o);
+}
+
+/* отложенные отзывы — в sess (массив sessions для /rotor/sessions/feedbacks/); под g_wv_mx */
+static void pend_take(cJSON **sess)
+{
+    if (!g_wv.pend) return;
+    if (!*sess) *sess = cJSON_CreateArray();
+    cJSON *s = cJSON_CreateObject();
+    cJSON_AddStringToObject(s, "sessionId", g_wv.pend_sid);
+    cJSON_AddItemToArray(cJSON_AddArrayToObject(s, "seeds"),
+                         cJSON_CreateString(g_wv.pend_seed[0] ? g_wv.pend_seed : "user:onyourwave"));
+    cJSON_AddItemToObject(s, "feedbacks", g_wv.pend);
+    cJSON_AddItemToArray(*sess, s);
+    g_wv.pend = NULL;
+}
+
+/* отзыв о треке сессии sid — в отложенные; отложенные другой сессии — в sess; под g_wv_mx */
+static void pend_add(const char *sid, const char *seed, cJSON *fb, cJSON **sess)
+{
+    if (g_wv.pend && strcmp(g_wv.pend_sid, sid)) pend_take(sess);
+    if (!g_wv.pend) {
+        g_wv.pend = cJSON_CreateArray();
+        snprintf(g_wv.pend_sid, sizeof g_wv.pend_sid, "%s", sid);
+        snprintf(g_wv.pend_seed, sizeof g_wv.pend_seed, "%s", seed);
+    }
+    cJSON_AddItemToArray(g_wv.pend, fb);
+}
+
+/* ушли из волны: отложенные — разом, как приложение при остановке */
+static void rotor_flush(cJSON *sess)
+{
+    if (!sess) return;
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddItemToObject(o, "sessions", sess);
+    char *body = cJSON_PrintUnformatted(o);
+    cJSON_Delete(api_json("POST", "/rotor/sessions/feedbacks/", ANDROID_CLIENT, body));
+    logm(1, "волна: отзывы при уходе (%d сесс.)", cJSON_GetArraySize(sess));
+    free(body);
+    cJSON_Delete(o);
+}
+
+/* в историю прослушиваний: начало (reason NULL) или конец песни */
+static void plays_send(const play_t *p, double total, double endpos, const char *reason)
+{
+    char ts[40], path[120];
+    iso_now(ts, sizeof ts);
+    int wave = p->sid[0];
+    cJSON *o = cJSON_CreateObject(), *pl = cJSON_CreateObject();
+    cJSON_AddItemToArray(cJSON_AddArrayToObject(o, "plays"), pl);
+    cJSON_AddStringToObject(pl, "playId", p->pid);
+    cJSON_AddStringToObject(pl, "from", wave ? WAVE_FROM : PLAY_FROM);
+    cJSON_AddNumberToObject(pl, "totalPlayedSeconds", ms3(total));
+    cJSON_AddNumberToObject(pl, "endPositionSeconds", ms3(endpos));
+    if (p->dur > 0) cJSON_AddNumberToObject(pl, "trackLengthSeconds", ms3(p->dur));
+    cJSON_AddStringToObject(pl, "timestamp", ts);
+    if (p->t.aid[0]) cJSON_AddStringToObject(pl, "albumId", p->t.aid);
+    cJSON_AddStringToObject(pl, "context", wave ? "radio" : "album");
+    cJSON_AddStringToObject(pl, "contextItem", wave ? (p->seed[0] ? p->seed : "user:onyourwave") : p->t.aid);
+    cJSON_AddStringToObject(pl, "trackId", p->t.tid);
+    if (wave) {
+        cJSON_AddStringToObject(pl, "radioSessionId", p->sid);
+        cJSON_AddStringToObject(pl, "batchId", p->batch);
+    }
+    cJSON_AddBoolToObject(pl, "fromCache", 0);
+    cJSON_AddBoolToObject(pl, "isRestored", 0);
+    cJSON_AddBoolToObject(pl, "isFromAutoflow", 0);
+    cJSON_AddBoolToObject(pl, "isFromPumpkin", 0);
+    cJSON_AddBoolToObject(pl, "seek", 0);
+    cJSON_AddBoolToObject(pl, "pause", 0);
+    cJSON_AddBoolToObject(pl, "isRepeated", 0);
+    if (reason) {
+        cJSON_AddStringToObject(pl, "startTimestamp", p->start);
+        cJSON_AddStringToObject(pl, "maxPlayerStage", "play");
+        cJSON_AddStringToObject(pl, "changeReason", reason);
+    }
+    char *body = cJSON_PrintUnformatted(o);
+    char *ets = url_esc(ts);
+    snprintf(path, sizeof path, "/plays?clientNow=%s", ets);
+    cJSON_Delete(api_json("POST", path, ANDROID_CLIENT, body));
+    if (reason) logm(1, "история: %s %s (%.0f с)", p->t.tid, reason, total);
+    else logm(1, "история: %s начало", p->t.tid);
+    free(ets); free(body); cJSON_Delete(o);
+}
+
+/* тело /rotor/session/new — как у приложения */
+static char *wave_new_body(const char *seed)
+{
+    cJSON *b = cJSON_CreateObject();
+    cJSON_AddItemToArray(cJSON_AddArrayToObject(b, "seeds"), cJSON_CreateString(seed[0] ? seed : "user:onyourwave"));
+    cJSON_AddBoolToObject(b, "includeTracksInResponse", 1);
+    cJSON_AddBoolToObject(b, "includeWaveModel", 1);
+    cJSON_AddBoolToObject(b, "interactive", 1);
+    char *s = cJSON_PrintUnformatted(b);
+    cJSON_Delete(b);
+    return s;
 }
 
 static void *wave_thread(void *arg)
@@ -2282,23 +2437,10 @@ static void *wave_thread(void *arg)
     wave_t *w = arg;
     pthread_mutex_lock(&g_wave_lock);
 
-    char (*next)[80] = NULL;                         /* что ещё в очереди после текущей */
-    int nn = 0;
-    cJSON *queue = NULL, *body = NULL, *r = NULL;
-    pthread_mutex_lock(&g_pl_mx);
-    int len = g_pl.n, song = q_idx(g_pl.aud);
-    if (song >= 0 && len - song - 1 < WAVE_LOW && (next = calloc((size_t)len + 1, sizeof *next)))
-        for (int i = song + 1; i < len; i++) snprintf(next[nn++], sizeof next[0], "%s", g_pl.q[i].t.tid);
-    pthread_mutex_unlock(&g_pl_mx);
-    if (!next) goto done;
-
-    /* сыгранное до текущего включительно — как queue у приложения */
-    queue = cJSON_CreateArray();
-    for (int i = 0; i < w->hn; i++) cJSON_AddItemToArray(queue, cJSON_CreateString(w->hist[i]));
-
+    cJSON *body = cJSON_CreateObject(), *r = NULL, *queue = cJSON_AddArrayToObject(body, "queue");
+    for (int i = 0; i < w->qn; i++) cJSON_AddItemToArray(queue, cJSON_CreateString(w->queue[i]));
+    if (w->fb) { cJSON_AddItemToObject(body, "feedbacks", w->fb); w->fb = NULL; }
     char path[300];
-    body = cJSON_CreateObject();
-    cJSON_AddItemReferenceToObject(body, "queue", queue);
     char *esid = url_esc(w->sid);
     snprintf(path, sizeof path, "/rotor/session/%s/tracks", esid);
     free(esid);
@@ -2308,17 +2450,12 @@ static void *wave_thread(void *arg)
     cJSON *res = cJSON_GetObjectItem(r, "result");
     if (!res || cJSON_IsTrue(cJSON_GetObjectItem(res, "unknownSession")) ||
         !cJSON_GetArraySize(cJSON_GetObjectItem(res, "sequence"))) {
-        /* сессия устарела — новая по тому же сиду */
+        /* сессия устарела — новая по тому же сиду (отзывы старой пропадут) */
         logm(0, "волна: сессия %s устарела, новая (%s)", w->sid, w->seed[0] ? w->seed : "user:onyourwave");
         cJSON_Delete(r);
-        cJSON *nb = cJSON_CreateObject(), *seeds = cJSON_AddArrayToObject(nb, "seeds");
-        cJSON_AddItemToArray(seeds, cJSON_CreateString(w->seed[0] ? w->seed : "user:onyourwave"));
-        cJSON_AddItemReferenceToObject(nb, "queue", queue);
-        cJSON_AddBoolToObject(nb, "includeTracksInResponse", 1);
-        bs = cJSON_PrintUnformatted(nb);
+        bs = wave_new_body(w->seed);
         r = api_json("POST", "/rotor/session/new", ANDROID_CLIENT, bs);
         free(bs);
-        cJSON_Delete(nb);
         res = cJSON_GetObjectItem(r, "result");
     }
     const char *sid = cJSON_GetStringValue(cJSON_GetObjectItem(res, "radioSessionId"));
@@ -2326,20 +2463,41 @@ static void *wave_thread(void *arg)
     qlist_t ql = {0};
     cJSON *it;
     cJSON_ArrayForEach(it, cJSON_GetObjectItem(res, "sequence")) ql_push(&ql, cJSON_GetObjectItem(it, "track"));
-    /* уже игранное и уже стоящее в очереди — мимо; если там одни повторы — лучше они, чем тишина */
-    int m = 0;
-    for (int pass = 0; pass < 2 && !m; pass++)
-        for (int i = 0; i < ql.n; i++)
-            if (ql.v[i].ok && (pass || !(id_in(w->hist, w->hn, ql.v[i].tid) || id_in(next, nn, ql.v[i].tid))))
-                ql.v[m++] = ql.v[i];
+
     pthread_mutex_lock(&g_pl_mx);
+    /* после того, что звучит и что плеер уже открыл заранее (пока шёл запрос, могли уйти дальше) */
+    int base = q_idx(w->after), a = q_idx(g_pl.aud), c = q_idx(g_pl.cur);
+    if (a > base) base = a;
+    if (c > base) base = c;
+    int m = 0, left = 0;
+    if (base >= 0) {
+        for (int i = base + 1; i < g_pl.n; i++) left += g_pl.q[i].sid[0] != 0;
+        /* сыгранное — мимо; одни повторы и волне дальше играть нечего — лучше они, чем тишина,
+         * но не текущая и не дважды из одной партии */
+        for (int pass = 0; pass < 2 && !m && (!pass || !left); pass++)
+            for (int i = 0; i < ql.n; i++) {
+                const char *tid = ql.v[i].tid;
+                int dup = !ql.v[i].ok || !strcmp(tid, g_pl.q[base].t.tid);
+                for (int j = 0; j < m && !dup; j++) dup = !strcmp(ql.v[j].tid, tid);
+                for (int j = 0; j < base && !dup && !pass; j++) dup = !strcmp(g_pl.q[j].t.tid, tid);
+                if (!dup && !pass) dup = id_in(w->hist, w->hn, tid);
+                if (!dup) ql.v[m++] = ql.v[i];
+            }
+    }
     if (m) {
-        int k = q_add(ql.v, m, sid, cJSON_GetStringValue(cJSON_GetObjectItem(res, "batchId")), w->seed);
-        logm(1, "волна: +%d в очередь (прислано %d)", k, ql.n);
+        /* невыслушанное волны после base — вон, партия — сразу за base */
+        int j = base + 1;
+        for (int i = base + 1; i < g_pl.n; i++)
+            if (!g_pl.q[i].sid[0]) g_pl.q[j++] = g_pl.q[i];
+        g_pl.n = j;
+        int k = q_insert(base + 1, ql.v, m, sid, cJSON_GetStringValue(cJSON_GetObjectItem(res, "batchId")), w->seed);
+        logm(1, "волна: партия %d (прислано %d), заменено %d", k, ql.n, left);
+    } else if (ql.n) {
+        logm(1, "волна: в партии одни повторы (прислано %d), очередь как была", ql.n);
     }
     /* очередь не растёт бесконечно, но и не сдвигается под приложением: сыгранное
      * убираем редко (за WAVE_KEEP_MAX — примерно сутки подряд), оставляя WAVE_KEEP */
-    song = q_idx(g_pl.aud);
+    int song = q_idx(g_pl.aud);
     if (song > WAVE_KEEP_MAX) {
         int k = song - WAVE_KEEP;
         memmove(g_pl.q, g_pl.q + k, (size_t)(g_pl.n - k) * sizeof *g_pl.q);
@@ -2347,11 +2505,8 @@ static void *wave_thread(void *arg)
     }
     pthread_mutex_unlock(&g_pl_mx);
     free(ql.v);
-done:
     cJSON_Delete(r);
     cJSON_Delete(body);
-    cJSON_Delete(queue);
-    free(next);
     pthread_mutex_unlock(&g_wave_lock);
     free(w);
     return NULL;
@@ -2385,55 +2540,60 @@ static void prefetch_around(long id)
     pthread_attr_destroy(&at);
 }
 
-/* зазвучала другая песня (e, NULL — нет песни): отзыв об уходе с прошлого трека волны,
- * trackStarted новому, подкачка. el, playing, now — её место и состояние */
-static void wave_song(long songid, const qent_t *e, double dur, double el, int playing, double now)
+/* зазвучала другая песня (e, NULL — нет песни): в историю — конец прошлой и начало этой;
+ * волне — отзыв об уходе с прошлого трека (в отложенные), trackStarted и подкачка.
+ * el, playing, now — её место и состояние; left — сколько в очереди после неё */
+static void wave_song(long songid, const qent_t *e, double dur, double el, int playing, int left, double now)
 {
+    static play_t prev, nw;                          /* только поток сторожа */
+    const char *reason = NULL;                       /* NULL — прошлой не было */
+    double ptotal = 0, ppos = 0;
+    cJSON *sess = NULL;
+    wave_t *w = NULL;
+    int wave = e && e->sid[0], force = 0;
     char id[80] = "";
-    char prev[80] = "", psid[160] = "", pbatch[160] = "";
-    const char *ptype = NULL;                        /* NULL — об уходе не сообщать */
-    double pplayed = -1, plen = 0;
-    wave_t *w = calloc(1, sizeof *w);
-    if (!w) return;
-    int wave = e && e->sid[0];
-    if (wave) {
-        snprintf(w->sid, sizeof w->sid, "%s", e->sid);
-        snprintf(w->batch, sizeof w->batch, "%s", e->batch);
-        snprintf(w->seed, sizeof w->seed, "%s", e->seed);
-        snprintf(id, sizeof id, "%s%s%s", e->t.tid, e->t.aid[0] ? ":" : "", e->t.aid);
+
+    memset(&nw, 0, sizeof nw);
+    if (e) {
+        nw.t = e->t;
+        snprintf(nw.sid, sizeof nw.sid, "%s", e->sid);
+        snprintf(nw.batch, sizeof nw.batch, "%s", e->batch);
+        snprintf(nw.seed, sizeof nw.seed, "%s", e->seed);
+        new_uuid(nw.pid, sizeof nw.pid);
+        iso_now(nw.start, sizeof nw.start);
+        nw.dur = dur;
+        track_ref(&e->t, id, sizeof id);
     }
 
     pthread_mutex_lock(&g_wv_mx);
-    if (g_wv.cur[0]) {
+    prev = g_wv.cur;
+    if (prev.t.tid[0]) {
         /* место прошлой при смене: последнее известное плюс время игры с тех пор (паузы — мимо) */
-        double len = g_wv.cur_dur, pos = g_wv.pos + (g_wv.playing ? now - g_wv.pos_t : 0);
+        double len = prev.dur, pos = g_wv.pos + (g_wv.playing ? now - g_wv.pos_t : 0);
+        if (len > 0 && pos > len) pos = len;
         int k = g_wv.mark && now - g_wv.mark_t < 15 ? g_wv.mark : WV_NONE;
-        snprintf(prev, sizeof prev, "%s", g_wv.cur);
-        snprintf(psid, sizeof psid, "%s", g_wv.cur_sid);
-        snprintf(pbatch, sizeof pbatch, "%s", g_wv.cur_batch);
-        if (k != WV_NONE) {                          /* next / prev / play pos / dislike */
-            ptype = k == WV_DISLIKE ? NULL : "skip"; /* за dislike отзыв уже ушёл */
-            pplayed = g_wv.mark_played;
-        } else if (len <= 0 || pos >= len - 5) {
-            ptype = "trackFinished";
-            pplayed = len > 0 ? len : pos;
-            plen = len;
-        } else {                                     /* очередь заменили, стоп */
-            ptype = "skip";
-            pplayed = pos;
+        int fin = k == WV_NONE && (len <= 0 || pos >= len - 5);
+        double played = k != WV_NONE ? g_wv.mark_played : pos;
+        ppos = pos;
+        ptotal = fin && len > 0 ? len : played;
+        reason = fin ? "finish" : e ? "skip" : "other_track";
+        if (prev.sid[0]) {
+            char pid[80];
+            track_ref(&prev.t, pid, sizeof pid);
+            if (k != WV_DISLIKE)                     /* за dislike отзыв уже ушёл */
+                pend_add(prev.sid, prev.seed, fin ? fb_event(prev.batch, "trackFinished", pid, pos, len)
+                                                  : fb_event(prev.batch, "skip", pid, played, 0), &sess);
+            force = !fin && k != WV_BACK;            /* пропуск вперёд, dislike — свежая партия */
         }
     }
     g_wv.songid = songid;
     g_wv.pos = el;
     g_wv.pos_t = now;
     g_wv.playing = playing;
-    g_wv.cur[0] = 0;
+    g_wv.cur = nw;
     g_wv.mark = WV_NONE;
+    if (!wave || (g_wv.pend && strcmp(g_wv.pend_sid, nw.sid))) pend_take(&sess);   /* ушли из волны */
     if (wave) {
-        snprintf(g_wv.cur, sizeof g_wv.cur, "%s", id);
-        snprintf(g_wv.cur_sid, sizeof g_wv.cur_sid, "%s", w->sid);
-        snprintf(g_wv.cur_batch, sizeof g_wv.cur_batch, "%s", w->batch);
-        g_wv.cur_dur = dur;
         if (!id_in(g_wv.hist, g_wv.hn, e->t.tid)) {
             if (g_wv.hn == WAVE_HIST) {
                 memmove(g_wv.hist, g_wv.hist + 1, (WAVE_HIST - 1) * sizeof g_wv.hist[0]);
@@ -2441,26 +2601,38 @@ static void wave_song(long songid, const qent_t *e, double dur, double el, int p
             }
             snprintf(g_wv.hist[g_wv.hn++], sizeof g_wv.hist[0], "%s", id);
         }
-        memcpy(w->hist, g_wv.hist, (size_t)g_wv.hn * sizeof g_wv.hist[0]);
-        w->hn = g_wv.hn;
+        if ((force || left < WAVE_LOW) && (w = calloc(1, sizeof *w))) {
+            snprintf(w->sid, sizeof w->sid, "%s", nw.sid);
+            snprintf(w->seed, sizeof w->seed, "%s", nw.seed);
+            if (prev.sid[0] && !strcmp(prev.sid, nw.sid)) track_ref(&prev.t, w->queue[w->qn++], sizeof w->queue[0]);
+            snprintf(w->queue[w->qn++], sizeof w->queue[0], "%s", id);
+            w->fb = g_wv.pend;                       /* отложенные — телом /tracks */
+            g_wv.pend = NULL;
+            w->after = songid;
+            memcpy(w->hist, g_wv.hist, (size_t)g_wv.hn * sizeof g_wv.hist[0]);
+            w->hn = g_wv.hn;
+        }
     }
     pthread_mutex_unlock(&g_wv_mx);
 
-    /* отзывы — здесь, по порядку; подкачка — в своём потоке */
-    if (ptype) rotor_feedback(psid, pbatch, ptype, prev, pplayed, plen);
-    if (!wave) { free(w); return; }
-    rotor_feedback(w->sid, w->batch, "trackStarted", id, -1, 0);
+    /* как приложение: история (конец, начало), потом волна */
+    if (reason) plays_send(&prev, ptotal, ppos, reason);
+    if (e) plays_send(&nw, 0, 0, NULL);
+    rotor_flush(sess);
+    if (!wave) return;
+    rotor_feedback(nw.sid, nw.batch, "trackStarted", id, -1, 0);
+    if (!w) return;
     pthread_t th;
     pthread_attr_t at;
     pthread_attr_init(&at);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
     pthread_attr_setstacksize(&at, 256 * 1024);
-    if (pthread_create(&th, &at, wave_thread, w)) free(w);
+    if (pthread_create(&th, &at, wave_thread, w)) { cJSON_Delete(w->fb); free(w); }
     pthread_attr_destroy(&at);
 }
 
-/* Сторож: зазвучала другая песня (не та, что плеер открыл заранее) — отзывы волны, соседей
- * в память; иначе запоминает место и состояние для отзыва при смене */
+/* Сторож: зазвучала другая песня (не та, что плеер открыл заранее) — история, отзывы волны,
+ * соседи в память; иначе запоминает место и состояние для отзыва при смене */
 static void *wave_watch(void *arg)
 {
     (void)arg;
@@ -2484,8 +2656,9 @@ static void *wave_watch(void *arg)
         static qent_t e;                             /* только этот поток */
         if (i >= 0) e = g_pl.q[i];
         double dur = g_pl.dur > 0 ? g_pl.dur : i >= 0 ? e.t.dur : 0;
+        int left = i >= 0 ? g_pl.n - i - 1 : 0;
         pthread_mutex_unlock(&g_pl_mx);
-        wave_song(id, i >= 0 ? &e : NULL, dur, el, playing, now);
+        wave_song(id, i >= 0 ? &e : NULL, dur, el, playing, left, now);
         if (i >= 0) prefetch_around(id);
         pthread_mutex_lock(&g_pl_mx);                /* пока шли отзывы, могло смениться ещё */
     }
@@ -2504,21 +2677,23 @@ static int wave_cur(wcur_t *c)
     c->played = pl_el();
     pthread_mutex_unlock(&g_pl_mx);
     pthread_mutex_lock(&g_wv_mx);
-    int ok = c->song >= 0 && songid == g_wv.songid && g_wv.cur[0];
+    int ok = c->song >= 0 && songid == g_wv.songid && g_wv.cur.t.tid[0] && g_wv.cur.sid[0];
     if (ok) {
-        snprintf(c->id, sizeof c->id, "%s", g_wv.cur);
-        snprintf(c->sid, sizeof c->sid, "%s", g_wv.cur_sid);
-        snprintf(c->batch, sizeof c->batch, "%s", g_wv.cur_batch);
+        track_ref(&g_wv.cur.t, c->id, sizeof c->id);
+        snprintf(c->sid, sizeof c->sid, "%s", g_wv.cur.sid);
+        snprintf(c->batch, sizeof c->batch, "%s", g_wv.cur.batch);
     }
     pthread_mutex_unlock(&g_wv_mx);
     return ok;
 }
 
-/* уходим с трека через наш API: сторож при смене пошлёт skip с этим временем, а не trackFinished */
+/* уходим с трека через наш API: сторож при смене отложит skip с этим временем, а не trackFinished */
 static void wave_mark(const wcur_t *c, int kind)
 {
     pthread_mutex_lock(&g_wv_mx);
-    if (kind != WV_NONE && c->id[0] && !strcmp(g_wv.cur, c->id)) {
+    char id[80];
+    track_ref(&g_wv.cur.t, id, sizeof id);
+    if (kind != WV_NONE && c->id[0] && !strcmp(id, c->id)) {
         g_wv.mark = kind;
         g_wv.mark_played = c->played;
         g_wv.mark_t = mono_now();
@@ -2526,17 +2701,32 @@ static void wave_mark(const wcur_t *c, int kind)
     pthread_mutex_unlock(&g_wv_mx);
 }
 
-/* очередь заменяют (/queue, /wave): треку волны — skip, как приложение при смене контекста;
- * история волны — заново */
+/* очередь заменяют (/queue, /wave): в историю — конец того, что звучит; волне — skip ему и
+ * отложенные разом, как приложение при смене контекста; история волны — заново */
 static void wave_leave(void)
 {
-    wcur_t c;
-    if (wave_cur(&c)) rotor_feedback(c.sid, c.batch, "skip", c.id, c.played, 0);
+    static play_t p;                                 /* под mx */
+    static pthread_mutex_t mx = PTHREAD_MUTEX_INITIALIZER;
+    cJSON *sess = NULL;
+    pthread_mutex_lock(&g_pl_mx);
+    double el = pl_el();
+    pthread_mutex_unlock(&g_pl_mx);
+    pthread_mutex_lock(&mx);
     pthread_mutex_lock(&g_wv_mx);                    /* songid и место — сторожу, как были */
+    p = g_wv.cur;
+    if (p.sid[0]) {
+        char id[80];
+        track_ref(&p.t, id, sizeof id);
+        pend_add(p.sid, p.seed, fb_event(p.batch, "skip", id, el, 0), &sess);
+    }
+    pend_take(&sess);
     g_wv.hn = 0;
-    g_wv.cur[0] = 0;
+    memset(&g_wv.cur, 0, sizeof g_wv.cur);
     g_wv.mark = WV_NONE;
     pthread_mutex_unlock(&g_wv_mx);
+    if (p.t.tid[0]) plays_send(&p, el, el, "other_track");
+    rotor_flush(sess);
+    pthread_mutex_unlock(&mx);
 }
 
 /* ---------- API для клиентов (приложение на ПК) ---------- */
@@ -2975,12 +3165,7 @@ static void h_wave(req_t *r)
     for (size_t i = 0; good && i < sl; i++)
         good = isalnum((unsigned char)seed[i]) || strchr("_.:-", seed[i]);
     if (!good) { send_fail(r->fd, 400, "плохой seed"); return; }
-    cJSON *b = cJSON_CreateObject();
-    cJSON_AddItemToArray(cJSON_AddArrayToObject(b, "seeds"), cJSON_CreateString(seed));
-    cJSON_AddArrayToObject(b, "queue");
-    cJSON_AddBoolToObject(b, "includeTracksInResponse", 1);
-    char *bs = cJSON_PrintUnformatted(b);
-    cJSON_Delete(b);
+    char *bs = wave_new_body(seed);
     cJSON *root, *res = ym("POST", "/rotor/session/new", "application/json", bs, &root, err, sizeof err), *it;
     free(bs);
     const char *s1 = jstr(res, "radioSessionId"), *s2 = jstr(res, "batchId");
