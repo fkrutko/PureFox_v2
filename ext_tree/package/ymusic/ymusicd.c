@@ -19,8 +19,7 @@
  *       Content-Type: audio/flac | audio/mpeg — по нему MPD выбирает декодер.
  *       Для треков «Моей волны» (w=...) — отзывы как у приложения (trackStarted, при уходе
  *       с прошлого trackFinished или skip со временем прослушивания) и подкачка следующей
- *       партии в очередь MPD, когда до конца очереди остаётся меньше 3 треков или трек
- *       пропущен вперёд (тогда невыслушанное волны в очереди меняется на свежую партию).
+ *       партии в очередь MPD, когда до конца очереди остаётся меньше 3 треков.
  *       Смену трека ловит сторож MPD (idle player), а не открытие потока: MPD открывает
  *       следующий заранее, на размер буфера.
  *
@@ -1403,8 +1402,8 @@ static cJSON *song_json(const char *blk)
 /* ---------- Моя волна ---------- */
 /* Как приложение Яндекс Музыки: trackStarted в начале трека, при уходе с него — trackFinished
  * (дослушан) или skip (пропущен) со временем прослушивания; queue в запросе партии — сыгранное
- * до текущего включительно (последние WAVE_HIST); пропуск вперёд — невыслушанное из очереди
- * вон и сразу свежая партия. */
+ * до текущего включительно (последние WAVE_HIST). Очередь при пропуске не трогаем — как
+ * приложение в режиме wave queue: пропуск влияет на следующие партии через отзыв. */
 #define WAVE_HIST       100
 
 enum { WV_NONE, WV_FWD, WV_BACK, WV_DISLIKE };       /* как ушли с трека через наш API */
@@ -1425,7 +1424,6 @@ static pthread_mutex_t g_wv_mx = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
     char sid[160], batch[160], seed[160];
-    int refresh;                                     /* пропуск вперёд: свежая партия сейчас */
     char hist[WAVE_HIST][80];
     int hn;
 } wave_t;
@@ -1481,53 +1479,37 @@ static void *wave_thread(void *arg)
     wave_t *w = arg;
     pthread_mutex_lock(&g_wave_lock);
 
-    buf_t st = {0}, pl = {0}, del = {0};
+    buf_t st = {0}, pl = {0};
     char (*next)[80] = NULL;                         /* что ещё в очереди после текущей */
-    int nn = 0, ndel = 0;
+    int nn = 0;
     cJSON *queue = NULL, *body = NULL, *r = NULL;
     int fd = mpd_connect();
     if (fd < 0) { logm(0, "волна: нет связи с MPD"); goto done; }
     if (mpd_cmd(fd, "status", &st)) goto close_mpd;
     long len = kv_long(st.p, "playlistlength"), song = kv_long(st.p, "song");
     if (len < 0 || song < 0) goto close_mpd;
-    if (!w->refresh && len - song - 1 >= WAVE_LOW) goto close_mpd;
+    if (len - song - 1 >= WAVE_LOW) goto close_mpd;
 
-    /* после текущей: при пропуске невыслушанное волны уйдёт, остальное — чтобы не добавить повтор */
+    /* что уже стоит после текущей — чтобы не добавить повтор */
     next = calloc((size_t)len + 1, sizeof *next);
     if (next && !mpd_cmd(fd, "playlistinfo", &pl)) {
         char tid[32] = "";
-        int wave = 0;
         long pos = -1;
-        bput(&del, "command_list_begin\n");
         for (char *line = pl.p; line && *line; ) {
             char *nl = strchr(line, '\n');
             if (nl) *nl = 0;
             if (!strncmp(line, "file: ", 6)) {
-                char *t = strstr(line, "/track/"), *qm = strchr(line, '?');
+                char *t = strstr(line, "/track/");
                 size_t i = 0;
                 for (t = t ? t + 7 : NULL; t && isdigit((unsigned char)*t) && i + 1 < sizeof tid; ) tid[i++] = *t++;
                 tid[i] = 0;
-                wave = qm && strstr(qm, "&w=");
             } else if (!strncmp(line, "Pos: ", 5)) {
                 pos = strtol(line + 5, NULL, 10);
-            } else if (!strncmp(line, "Id: ", 4) && pos > song) {
-                if (w->refresh && wave) {
-                    bput(&del, "deleteid ");
-                    bput(&del, line + 4);
-                    bput(&del, "\n");
-                    ndel++;
-                } else if (tid[0] && nn < len) {
-                    snprintf(next[nn++], sizeof next[0], "%s", tid);
-                }
+            } else if (!strncmp(line, "Id: ", 4) && pos > song && tid[0] && nn < len) {
+                snprintf(next[nn++], sizeof next[0], "%s", tid);
             }
             line = nl ? nl + 1 : NULL;
         }
-    }
-    bput(&del, "command_list_end");
-    /* невыслушанное убираем, только когда есть чем заменить: не ответил сервер — играет старое */
-    if (len - ndel - song - 1 >= WAVE_LOW) {
-        if (ndel && !mpd_cmd(fd, del.p, NULL)) logm(1, "волна: пропуск, из очереди убрано %d", ndel);
-        goto close_mpd;
     }
 
     /* сыгранное до текущего включительно — как queue у приложения */
@@ -1572,8 +1554,6 @@ static void *wave_thread(void *arg)
         for (int i = 0; i < ql.n; i++)
             if (ql.v[i].ok && (pass || !(id_in(w->hist, w->hn, ql.v[i].tid) || id_in(next, nn, ql.v[i].tid))))
                 ql.v[m++] = ql.v[i];
-    if (ndel && !m) logm(0, "волна: свежей партии нет, очередь как была");
-    else if (ndel && !mpd_cmd(fd, del.p, NULL)) logm(1, "волна: пропуск, из очереди убрано %d", ndel);
     if (m) logm(1, "волна: +%d в очередь (прислано %d)", mpd_add_tracks(fd, ql.v, m, wq), ql.n);
     free(ql.v);
     /* очередь не растёт бесконечно: сыгранное старше 20 треков убрать */
@@ -1588,7 +1568,7 @@ done:
     cJSON_Delete(r);
     cJSON_Delete(body);
     cJSON_Delete(queue);
-    free(st.p); free(pl.p); free(del.p); free(next);
+    free(st.p); free(pl.p); free(next);
     pthread_mutex_unlock(&g_wave_lock);
     free(w);
     return NULL;
@@ -1686,7 +1666,6 @@ static void wave_song(long songid, const char *file, double dur, double el, int 
         if (k != WV_NONE) {                          /* next / prev / play pos / dislike */
             ptype = k == WV_DISLIKE ? NULL : "skip"; /* за dislike отзыв уже ушёл */
             pplayed = g_wv.mark_played;
-            w->refresh = k != WV_BACK;
         } else if (len <= 0 || pos >= len - 5) {
             ptype = "trackFinished";
             pplayed = len > 0 ? len : pos;
@@ -2406,7 +2385,7 @@ static void h_ctl(req_t *r)
     } else {
         snprintf(cmd, sizeof cmd, "%s", !strcmp(c, "prev") ? "previous" : !strcmp(c, "pause") ? "pause 1" : c);
     }
-    /* уход с трека волны: сторож пошлёт skip, а вперёд — ещё и свежую партию */
+    /* уход с трека волны: сторож пошлёт skip, а не trackFinished */
     int kind = !strcmp(c, "next") ? WV_FWD : !strcmp(c, "prev") ? WV_BACK : WV_NONE;
     wcur_t wc;
     if ((kind != WV_NONE || to >= 0) && wave_cur(fd, &wc)) {
