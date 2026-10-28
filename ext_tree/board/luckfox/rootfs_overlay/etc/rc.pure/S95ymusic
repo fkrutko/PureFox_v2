@@ -1,0 +1,37 @@
+#!/bin/sh
+# Yandex Music is played by ymusicd itself (S96ymusicd, always running):
+# /tmp/ymusic/active lets it use the output. stop takes it away and waits
+# until ymusicd has closed ALSA, so the next player finds the device free.
+
+ACTIVE=/tmp/ymusic/active
+
+start() {
+    printf "Starting Yandex Music: "
+    mkdir -p /tmp/ymusic
+    echo on > $ACTIVE
+    /etc/init.d/S96ymusicd start > /dev/null 2>&1
+    pidof ymusicd >/dev/null && echo "OK" || echo "FAIL"
+    if [ -f /tmp/mixer_control_cache ]; then
+        MIXER=$(cat /tmp/mixer_control_cache | cut -d, -f1 | tr -d "'")
+        [ -n "$MIXER" ] && amixer set "$MIXER" unmute 2>/dev/null
+    fi
+}
+stop() {
+    rm -f $ACTIVE
+    pidof ymusicd >/dev/null && curl -s -m 6 -X POST http://127.0.0.1:6601/output > /dev/null 2>&1
+    return 0
+}
+restart() {
+	stop
+	start
+}
+case "$1" in
+  start|stop|restart)
+	"$1"
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?

@@ -1,17 +1,33 @@
 #!/bin/sh
-# MPD plays Yandex Music: ymusicd (S96ymusicd) fills its queue
+# MPD (UPnP): upmpdcli is the UPnP/OpenHome renderer, MPD plays what it queues
+
+# Name shown to UPnP control points, unique per board like the NAA name:
+# hostname + last 3 octets of the eth0 MAC
+upnp_name() {
+    ID=$(cat /sys/class/net/eth0/address 2>/dev/null | tr -d ':' | tr 'a-z' 'A-Z')
+    [ -z "$ID" ] && ID=$(awk '/Serial/ {print $NF}' /proc/cpuinfo | tr 'a-z' 'A-Z')
+    ID=$(echo "$ID" | tail -c 7)
+    if [ -n "$ID" ]; then
+        echo "$(hostname)-$ID"
+    else
+        hostname
+    fi
+}
 
 start() {
-    printf "Starting MPD: "
+    printf "Starting MPD (UPnP): "
     /usr/bin/mpd /etc/mpd.conf > /dev/null 2>&1
+    mkdir -p /tmp/upmpdcli && chown upmpdcli /tmp/upmpdcli
+    /usr/bin/upmpdcli -D -c /etc/upmpdcli.conf -f "$(upnp_name)" > /dev/null 2>&1
     sleep 0.5
-    pidof mpd >/dev/null && echo "OK" || echo "FAIL"
+    pidof mpd >/dev/null && pidof upmpdcli >/dev/null && echo "OK" || echo "FAIL"
     if [ -f /tmp/mixer_control_cache ]; then
         MIXER=$(cat /tmp/mixer_control_cache | cut -d, -f1 | tr -d "'")
         [ -n "$MIXER" ] && amixer set "$MIXER" unmute 2>/dev/null
     fi
 }
 stop() {
+    killall -9 upmpdcli 2>/dev/null
     killall -9 mpd 2>/dev/null
 }
 restart() {

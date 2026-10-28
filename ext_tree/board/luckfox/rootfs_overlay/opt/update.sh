@@ -138,6 +138,11 @@ killall status_monitor 2>/dev/null
 cp /etc/i2s.conf "$WORK/i2s.conf" 2>/dev/null
 cp /etc/lownoise.conf "$WORK/lownoise.conf" 2>/dev/null
 
+# Yandex Music used to play through MPD (S95mpd, no upmpdcli): it is its own
+# player now, and S95mpd is MPD (UPnP)
+YMUSIC_MPD=
+[ "$(readlink /etc/init.d/S95player)" = /etc/rc.pure/S95mpd ] && [ ! -e /usr/bin/upmpdcli ] && YMUSIC_MPD=1
+
 # ---- files ----
 set --
 for p in $KEEP_IF_PRESENT; do
@@ -172,9 +177,13 @@ if [ -L /etc/init.d/S95player ]; then
         [ "$link" = /etc/init.d/S95player ] && continue
         [ -L "$link" ] || continue
         case "$(readlink "$link")" in
-            */S95naa|*/S95scream|*/S95apscream|*/S95aprenderer|*/S95mpd) rm -f "$link" ;;
+            */S95naa|*/S95scream|*/S95apscream|*/S95aprenderer|*/S95mpd|*/S95ymusic) rm -f "$link" ;;
         esac
     done
+fi
+if [ -n "$YMUSIC_MPD" ] && [ -x /etc/rc.pure/S95ymusic ]; then
+    rm -f /etc/init.d/S95player
+    ln -s /etc/rc.pure/S95ymusic /etc/init.d/S95player
 fi
 sync
 

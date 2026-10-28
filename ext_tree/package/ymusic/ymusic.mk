@@ -8,11 +8,11 @@ YMUSIC_VERSION = 2.0
 YMUSIC_SITE_METHOD = local
 YMUSIC_SITE = $(BR2_EXTERNAL_ext_tree_PATH)/package/ymusic
 YMUSIC_LICENSE = GPL-2.0+, MIT (cJSON)
-YMUSIC_DEPENDENCIES = libcurl openssl
+YMUSIC_DEPENDENCIES = libcurl openssl alsa-lib flac libmad
 
 define YMUSIC_BUILD_CMDS
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -Wall -O2 -s \
-		-o $(@D)/ymusicd $(@D)/ymusicd.c $(@D)/cJSON.c -lcurl -lcrypto -lpthread
+		-o $(@D)/ymusicd $(@D)/ymusicd.c $(@D)/cJSON.c -lcurl -lcrypto -lasound -lFLAC -lmad -lpthread
 endef
 
 define YMUSIC_INSTALL_TARGET_CMDS

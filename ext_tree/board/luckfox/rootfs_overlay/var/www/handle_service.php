@@ -30,11 +30,11 @@ function stopProcessGroup($processList) {
     executeCommand("killall -9 $plist 2>/dev/null || true");
 }
 
-function waitForProcess($process, $timeoutMs = 1000) {
+function waitForProcess($process, $timeoutMs = 1000, $flag = null) {
     $attempts = (int)($timeoutMs / 100);
     for ($attempt = 0; $attempt < $attempts; $attempt++) {
         $pid = trim((string)shell_exec('/bin/pidof ' . escapeshellarg($process) . ' 2>/dev/null'));
-        if ($pid !== '') {
+        if ($pid !== '' && ($flag === null || file_exists($flag))) {
             return true;
         }
         usleep(100000);
@@ -48,6 +48,8 @@ $players = [
     'apscream'   => ['process' => 'apscream',        'script' => 'S95apscream'],
     'aprenderer' => ['process' => 'ap2renderer',     'script' => 'S95aprenderer'],
     'mpd'        => ['process' => 'mpd',             'script' => 'S95mpd'],
+    // ymusicd runs all the time; it is the player while the flag file exists
+    'ymusic'     => ['process' => 'ymusicd',         'script' => 'S95ymusic', 'flag' => '/tmp/ymusic/active'],
 ];
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -79,8 +81,11 @@ try {
     // Stop previously active managed player if present
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
+    // ymusicd is not killed: it gives the output back and keeps serving its API
+    executeCommand('/etc/rc.pure/S95ymusic stop');
+
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'scream', 'apscream', 'ap2renderer', 'mpd']);
+    stopProcessGroup(['networkaudiod', 'scream', 'apscream', 'ap2renderer', 'mpd', 'upmpdcli']);
 
     // Create one stable managed symlink. Older firmware left player links
     // under other names (S95naa): drop every link to a player script so only
@@ -107,7 +112,7 @@ try {
 
     // Confirm the actual process without a fixed one-second delay.
     $proc = $players[$playerToStart]['process'];
-    $confirmed = waitForProcess($proc, 1000);
+    $confirmed = waitForProcess($proc, 1000, $players[$playerToStart]['flag'] ?? null);
 
     echo json_encode([
         'status' => $confirmed ? 'success' : 'error',

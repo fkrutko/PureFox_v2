@@ -34,6 +34,8 @@ static int event_clients[EVENT_CLIENTS_MAX] = { -1, -1, -1, -1 };
 static char status_json[512];
 static char boot_id[40];
 static pid_t active_service_pid;
+
+#define YMUSIC_ACTIVE "/tmp/ymusic/active"
 static long long last_service_discovery;
 
 void update_status_file(void);
@@ -200,6 +202,7 @@ void get_active_service(char* service, pid_t *pid) {
         {"apscream", "apscream"},
         {"ap2renderer", "aprenderer"},
         {"mpd", "mpd"},
+        {"ymusicd", "ymusic"},   /* runs all the time: a player only with YMUSIC_ACTIVE */
         {NULL, NULL}
     };
     
@@ -226,7 +229,8 @@ void get_active_service(char* service, pid_t *pid) {
             }
             
             for (int i = 0; services[i][0]; i++) {
-                if (strcmp(process_name, services[i][0]) == 0) {
+                if (strcmp(process_name, services[i][0]) == 0 &&
+                    (strcmp(services[i][1], "ymusic") != 0 || access(YMUSIC_ACTIVE, F_OK) == 0)) {
                     strcpy(service, services[i][1]);
                     *pid = (pid_t)strtol(entry->d_name, NULL, 10);
                     fclose(cmdline_file);
@@ -250,9 +254,12 @@ static void refresh_active_service_state(void)
     long long now;
 
     if (active_service_pid > 0) {
-        if (kill(active_service_pid, 0) == 0 || errno == EPERM)
+        /* ymusicd outlives its turn as the player: the flag file decides */
+        int gone = strcmp(current_status.active_service, "ymusic") == 0 &&
+                   access(YMUSIC_ACTIVE, F_OK) != 0;
+        if (!gone && (kill(active_service_pid, 0) == 0 || errno == EPERM))
             return;
-        if (errno != ESRCH)
+        if (!gone && errno != ESRCH)
             return;
     } else {
         now = monotonic_ms();

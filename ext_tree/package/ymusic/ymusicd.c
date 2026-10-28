@@ -1,5 +1,5 @@
 /*
- * ymusicd — Яндекс Музыка для PureFox (из DigiFox): API для приложения на ПК и потоки для MPD.
+ * ymusicd — Яндекс Музыка для PureFox (из DigiFox): API для приложения на ПК и свой плеер.
  *
  * HTTP на 0.0.0.0:6601. Ответы — JSON с "ok": true|false (при false — "msg" и код 4xx/5xx).
  * Параметры — в строке запроса или в теле POST (application/x-www-form-urlencoded).
@@ -10,23 +10,26 @@
  *   Очередь:  POST /queue ids=id[:альбом],...&start=N[&append=1] · POST /wave seed=
  *             GET /queue?before=5&after=10 · GET /now
  *   Пульт:    /next /prev /toggle /play[?pos=N] /pause /stop /seek?t=|d= · POST /like /dislike id=&a=
+ *   Плата:    POST /output — только с 127.0.0.1, от S95ymusic: Фокс включает другой плеер
  *
- *   GET|HEAD /track/<id>.<flac|mp3>[?a=<альбом>&w=<сессия волны>&b=<партия>&s=<сид>]
- *       Только с 127.0.0.1 — аудиопоток трека для MPD. Ссылка берётся из /get-file-info
- *       (подпись HMAC-SHA256 ключом десктопного приложения), поток в транспорте encraw
- *       расшифровывается на лету (AES-128-CTR, ключ из ответа, счётчик с нуля). Range
- *       поддерживается (перемотка в MPD), обрыв со стороны CDN — докачка с того же места.
- *       Content-Type: audio/flac | audio/mpeg — по нему MPD выбирает декодер.
- *       Для треков «Моей волны» (w=...) — отзывы как у приложения (trackStarted, при уходе
- *       с прошлого trackFinished или skip со временем прослушивания) и подкачка следующей
- *       партии в очередь MPD, когда до конца очереди остаётся меньше 3 треков.
- *       Смену трека ловит сторож MPD (idle player), а не открытие потока: MPD открывает
- *       следующий заранее, на размер буфера.
+ * Плеер. Ссылка на файл трека — из /get-file-info (подпись HMAC-SHA256 ключом десктопного
+ * приложения), файл в транспорте encraw расшифровывается на лету (AES-128-CTR, ключ из ответа,
+ * счётчик с нуля) в окно в памяти; перемотка — запрос к CDN с нужного места, обрыв — докачка.
+ * FLAC декодирует libFLAC, MP3 — libmad (24 бита, задержка и добивка LAME — как в MPD).
+ * Вывод — в ALSA "default" (/etc/asound.conf — выход, выбранный в Фоксе) без громкости и
+ * пересчёта частоты: сэмпл как есть, при нужде в более широком контейнере. Следующий трек того
+ * же формата идёт без паузы; начала соседних треков очереди заранее в памяти. Поток ALSA не
+ * останавливается ни на паузе, ни при перемотке и смене трека (иначе на I2S гаснут такты и ЦАП
+ * потом секунду-другую молчит): несыгранное забирается назад, пустоту заполняет тишина.
+ * Для треков «Моей волны» — отзывы как у приложения (trackStarted, при уходе с прошлого
+ * trackFinished или skip со временем прослушивания) и подкачка следующей партии в очередь,
+ * когда до её конца остаётся меньше 3 треков.
  *
- * Играть начинает MPD: если активен другой плеер, /queue и /wave переключают на MPD
- * через handle_service.php, как кнопка «Яндекс Музыка» на главной.
+ * Играет, только когда Яндекс Музыка — плеер Фокса (есть /tmp/ymusic/active, его ставит и убирает
+ * /etc/rc.pure/S95ymusic). Иначе /queue и /wave переключают Фокс на неё через handle_service.php,
+ * как кнопка «Яндекс Музыка» на главной.
  *
- * Сборка:  cc -O2 -o ymusicd ymusicd.c cJSON.c -lcurl -lcrypto -lpthread
+ * Сборка:  cc -O2 -o ymusicd ymusicd.c cJSON.c -lcurl -lcrypto -lasound -lFLAC -lmad -lpthread
  * GPL-2.0+, перенесено из DigiFox (github.com/DrModd/DigiFox).
  */
 #define _GNU_SOURCE
@@ -48,7 +51,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <alsa/asoundlib.h>
 #include <curl/curl.h>
+#include <FLAC/stream_decoder.h>
+#include <mad.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 
@@ -62,7 +68,7 @@
 #define MAX_CLIENTS     24
 #define INFO_TTL        300                                   /* с, кэш ссылок на файлы */
 #define WAVE_LOW        3                                     /* подкачка, если осталось < 3 */
-#define MAX_QUEUE       500                                   /* треков за раз в очередь MPD */
+#define MAX_QUEUE       500                                   /* треков за раз в очередь */
 #define MAX_LIST        1000                                  /* треков в «Мне нравится» и плейлисте */
 #define COVER_SIZE      "400x400"
 #define OAUTH_URL       "https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d"
@@ -73,9 +79,9 @@ static int         g_port    = 6601;
 static const char *g_token_f = "/var/lib/ymusic/token";
 static const char *g_qual_f  = "/var/lib/ymusic/quality";
 static const char *g_api     = "https://api.music.yandex.net";
-static const char *g_mpd     = "127.0.0.1";
-static int         g_mpd_port = 6600;
+static const char *g_dev     = "default";            /* ALSA */
 static const char *g_cover_d = "/tmp/ymusic";
+static char        g_active_f[300];                   /* <g_cover_d>/active — Яндекс Музыка выбрана плеером */
 static const char *g_transport = "encraw";
 static int         g_verbose = 0;
 
@@ -388,7 +394,7 @@ static int file_info(const char *tid, finfo_t *fi, char *err, size_t esz)
         }
     pthread_mutex_unlock(&g_lock);
 
-    /* MPD без ffmpeg не открывает MP4-контейнер, поэтому только flac и mp3 */
+    /* MP4-контейнер (flac-mp4, aac-mp4) плееру не по зубам, поэтому только flac и mp3 */
     const char *codecs = !strcmp(q, "lossless") ? "flac,mp3" : "mp3";
     char codecs_nc[32], msg[256], sig[64];
     size_t j = 0;
@@ -451,20 +457,16 @@ static int file_info(const char *tid, finfo_t *fi, char *err, size_t esz)
     return 0;
 }
 
-/* ---------- поток: CDN -> (расшифровка) -> MPD ---------- */
+/* ---------- поток трека: CDN -> (расшифровка) ---------- */
 typedef struct {
-    int fd, head_only, headers_sent, failed, cut;
+    int failed;
     long status;                 /* статус текущего ответа CDN */
     long long cr_start;          /* начало из Content-Range */
     long long clen;              /* Content-Length текущего ответа */
     long long total;             /* полный размер файла, если известен */
-    long long req_start, req_end;/* что просил клиент */
-    long long sent;              /* сколько тела отдано клиенту */
-    int ranged;                  /* клиент просил Range */
     long long fetch_from;        /* с какого смещения просили CDN в этом запросе */
     int fetch_started;           /* первый кусок тела этого запроса уже был */
     long long skip;              /* CDN не выполнил Range: столько байт выбросить */
-    const char *mime;
     EVP_CIPHER_CTX *ctx;
     unsigned char key[16];
     int enc;
@@ -505,135 +507,9 @@ static size_t cb_hdr(char *d, size_t sz, size_t n, void *u)
     return len;
 }
 
-static int send_head(stream_t *s)
-{
-    if (s->headers_sent) return 0;
-    s->headers_sent = 1;
-    if (s->status == 200 && s->clen >= 0 && s->total < 0) s->total = s->clen;
-    long long tot = s->total;
-    if (s->ranged && tot > 0) {
-        long long a = s->req_start, b = s->req_end >= 0 && s->req_end < tot ? s->req_end : tot - 1;
-        if (a >= tot)
-            return sendf(s->fd, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */%lld\r\n"
-                                "Connection: close\r\n\r\n", tot), -1;
-        return sendf(s->fd, "HTTP/1.1 206 Partial Content\r\nContent-Type: %s\r\nAccept-Ranges: bytes\r\n"
-                            "Content-Range: bytes %lld-%lld/%lld\r\nContent-Length: %lld\r\n"
-                            "Connection: close\r\n\r\n", s->mime, a, b, tot, b - a + 1);
-    }
-    if (tot > 0)
-        return sendf(s->fd, "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nAccept-Ranges: bytes\r\n"
-                            "Content-Length: %lld\r\nConnection: close\r\n\r\n", s->mime, tot);
-    return sendf(s->fd, "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nConnection: close\r\n\r\n", s->mime);
-}
-
-static size_t cb_body(char *d, size_t sz, size_t n, void *u)
-{
-    stream_t *s = u;
-    size_t len = sz * n;
-    if (s->status >= 400 || (s->status != 200 && s->status != 206)) { s->failed = 1; return 0; }
-    if (!s->headers_sent) {
-        if (send_head(s)) { s->cut = 1; return 0; }
-        if (s->head_only) { s->cut = 1; return 0; }
-    }
-    if (!s->fetch_started) {
-        /* откуда на самом деле начались данные: 206 — из Content-Range, 200 — с нуля */
-        s->fetch_started = 1;
-        long long actual = s->status == 206 ? s->cr_start : 0;
-        if (actual != s->fetch_from) {
-            if (actual > s->fetch_from || ctr_init(s, actual)) { s->failed = 1; return 0; }
-            s->skip = s->fetch_from - actual;
-        }
-    }
-    unsigned char out[65536 + 32];
-    size_t off = 0;
-    while (off < len) {
-        size_t in = len - off > 65536 ? 65536 : len - off, chunk = in;
-        const unsigned char *src = (unsigned char *)d + off;
-        if (s->enc) {
-            int ol = 0;
-            if (!EVP_DecryptUpdate(s->ctx, out, &ol, src, (int)chunk)) { s->failed = 1; return 0; }
-            src = out; chunk = (size_t)ol;
-        }
-        if (s->skip > 0) {
-            size_t d0 = s->skip > (long long)chunk ? chunk : (size_t)s->skip;
-            s->skip -= (long long)d0; src += d0; chunk -= d0;
-        }
-        if (chunk && send_all(s->fd, src, chunk)) { s->cut = 1; return 0; }   /* MPD закрыл соединение */
-        s->sent += (long long)chunk;
-        off += in;
-    }
-    return len;
-}
-
-/* один запрос к CDN с позиции from (абсолютное смещение в файле); 0 — дочитано до конца */
-static int cdn_fetch(stream_t *s, const finfo_t *fi, long long from)
-{
-    CURL *c = curl_easy_init();
-    if (!c) return -1;
-    char range[64];
-    s->status = 0; s->clen = -1; s->cr_start = 0;
-    s->fetch_from = from; s->fetch_started = 0; s->skip = 0;
-    curl_easy_setopt(c, CURLOPT_SHARE, g_share);
-    curl_easy_setopt(c, CURLOPT_URL, fi->url);
-    curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
-    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, cb_hdr);
-    curl_easy_setopt(c, CURLOPT_HEADERDATA, s);
-    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb_body);
-    curl_easy_setopt(c, CURLOPT_WRITEDATA, s);
-    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
-    curl_easy_setopt(c, CURLOPT_BUFFERSIZE, 65536L);
-    if (s->head_only && !s->ranged) {
-        /* HEAD: первый байт, чтобы узнать размер из Content-Range (HEAD CDN может не уметь) */
-        curl_easy_setopt(c, CURLOPT_RANGE, "0-0");
-    } else if (from > 0 || s->ranged) {
-        if (s->req_end >= 0) snprintf(range, sizeof range, "%lld-%lld", from, s->req_end);
-        else snprintf(range, sizeof range, "%lld-", from);
-        curl_easy_setopt(c, CURLOPT_RANGE, range);
-    }
-    CURLcode rc = curl_easy_perform(c);
-    long code = 0, nc = 0, redir = 0;
-    double tls = 0, ttfb = 0;
-    char *eff = NULL;
-    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
-    curl_easy_getinfo(c, CURLINFO_NUM_CONNECTS, &nc);
-    curl_easy_getinfo(c, CURLINFO_REDIRECT_COUNT, &redir);
-    curl_easy_getinfo(c, CURLINFO_APPCONNECT_TIME, &tls);
-    curl_easy_getinfo(c, CURLINFO_STARTTRANSFER_TIME, &ttfb);
-    curl_easy_getinfo(c, CURLINFO_EFFECTIVE_URL, &eff);
-    if (g_verbose) {
-        char host[128] = "";
-        const char *h = eff ? strstr(eff, "://") : NULL;
-        if (h) snprintf(host, sizeof host, "%.*s", (int)strcspn(h + 3, "/"), h + 3);
-        logm(1, "CDN %s с %lld: соединений %ld, редиректов %ld, TLS %.3f, первый байт %.3f с",
-             host, from, nc, redir, tls, ttfb);
-    }
-    curl_easy_cleanup(c);
-    if (rc == CURLE_OK) return 0;
-    if (s->cut) return 1;                                    /* клиент ушёл — не ошибка */
-    logm(0, "CDN: %s (HTTP %ld, отдано %lld)", curl_easy_strerror(rc), code, s->sent);
-    return -1;
-}
-
-static void prefetch_next(const char *tid);
-
-/* формат, который на самом деле отдаёт CDN (flac, mp3...): для «сейчас играет» */
-static void write_codec(const char *tid, const char *codec)
-{
-    char path[512];
-    mkdir(g_cover_d, 0755);
-    snprintf(path, sizeof path, "%s/%s.codec", g_cover_d, tid);
-    FILE *f = fopen(path, "w");
-    if (f) { fputs(codec, f); fclose(f); }
-}
-
-/* тип, шифр и ключ потока по ссылке на файл */
+/* шифр и ключ потока по ссылке на файл */
 static void stream_setup(stream_t *s, const finfo_t *fi)
 {
-    s->mime = !strcmp(fi->codec, "mp3") ? "audio/mpeg" : !strncmp(fi->codec, "flac", 4) ? "audio/flac"
-            : !strcmp(fi->codec, "aac") ? "audio/aac" : "application/octet-stream";
     s->enc = !strcmp(fi->transport, "encraw") && strlen(fi->key) == 32;
     if (s->enc)
         for (int k = 0; k < 16; k++) {
@@ -643,8 +519,8 @@ static void stream_setup(stream_t *s, const finfo_t *fi)
 }
 
 /* Начала соседних треков очереди (уже расшифрованные) в памяти: «дальше» и
- * «назад» отдают их MPD сразу, а соединение с CDN для остального (~0,5–1 с
- * на этом процессоре) открывается, пока MPD играет начало */
+ * «назад» плеер начинает сразу, а соединение с CDN для остального (~0,5–1 с
+ * на этом процессоре) открывается, пока играет начало */
 #define PRE_BYTES (512 * 1024)
 typedef struct {
     char tid[32], quality[12], codec[16];
@@ -752,92 +628,699 @@ static void pre_fill(const char *tid)
     free(b.p);
 }
 
-static void serve_track(int fd, const char *method, const char *path, const char *range)
-{
-    /* /track/<id>.<ext> */
-    char tid[32] = {0};
-    const char *p = path + 7;
-    size_t i = 0;
-    while (*p && *p != '.' && *p != '/' && i + 1 < sizeof tid) {
-        if (!isdigit((unsigned char)*p)) { reply_json_err(fd, 400, "bad track id"); return; }
-        tid[i++] = *p++;
-    }
-    if (!tid[0]) { reply_json_err(fd, 400, "bad track id"); return; }
+/* ---------- файл трека для декодера ---------- */
+/* Окно файла в памяти (кольцо SRC_CAP), его докачивает свой поток; начало из g_pre — сразу,
+ * без сети. Чтение с места rpos; место далеко от окна (перемотка) — новый запрос к CDN
+ * оттуда. Обрыв со стороны CDN или протухшая ссылка — новая ссылка и докачка с того же места */
+#define SRC_CAP   (4 * 1024 * 1024)
+#define SRC_BACK  (512 * 1024)                       /* прочитанное, что держим для перемотки назад */
+#define SRC_AHEAD (512 * 1024)                       /* перемотка вперёд ближе — дождаться, без запроса */
 
+static volatile unsigned g_gen;                      /* меняет команда плееру (другой трек, стоп) */
+static void (*g_src_idle)(void);                     /* пока ждём данных: тишина в ALSA (поток плеера) */
+
+typedef struct {
+    char tid[32];
+    unsigned gen;                                    /* g_gen при открытии: сменился — читать нечего */
+    pthread_mutex_t mx;
+    pthread_cond_t cv;
+    unsigned char *buf;                              /* байт файла x — в buf[x % SRC_CAP] */
+    long long lo, hi, rpos, total;                   /* в памяти [lo, hi), читаем с rpos; total < 0 — неизвестен */
+    int restart, closing, done, failed, refs;
     stream_t s;
-    memset(&s, 0, sizeof s);
-    s.fd = fd;
-    s.head_only = !strcmp(method, "HEAD");
-    s.total = -1;
-    s.req_end = -1;
-    if (range && !strncasecmp(range, "bytes=", 6)) {
-        const char *r = range + 6;
-        if (isdigit((unsigned char)*r)) {
-            s.ranged = 1;
-            s.req_start = strtoll(r, (char **)&r, 10);
-            if (*r == '-' && isdigit((unsigned char)r[1])) s.req_end = strtoll(r + 1, NULL, 10);
+} src_t;
+
+static void cond_init(pthread_cond_t *c)
+{
+    pthread_condattr_t a;
+    pthread_condattr_init(&a);
+    pthread_condattr_setclock(&a, CLOCK_MONOTONIC);
+    pthread_cond_init(c, &a);
+    pthread_condattr_destroy(&a);
+}
+
+static void cond_wait_ms(pthread_cond_t *c, pthread_mutex_t *m, int ms)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    t.tv_sec += ms / 1000;
+    t.tv_nsec += (ms % 1000) * 1000000L;
+    if (t.tv_nsec >= 1000000000L) { t.tv_sec++; t.tv_nsec -= 1000000000L; }
+    pthread_cond_timedwait(c, m, &t);
+}
+
+static void src_unref(src_t *s)
+{
+    pthread_mutex_lock(&s->mx);
+    int last = --s->refs == 0;
+    pthread_mutex_unlock(&s->mx);
+    if (!last) return;
+    if (s->s.ctx) EVP_CIPHER_CTX_free(s->s.ctx);
+    pthread_cond_destroy(&s->cv);
+    pthread_mutex_destroy(&s->mx);
+    free(s->buf);
+    free(s);
+}
+
+/* расшифрованное — в кольцо; -1 — бросить запрос (перемотка, закрытие) */
+static int src_put(src_t *s, const unsigned char *d, size_t n)
+{
+    pthread_mutex_lock(&s->mx);
+    while (n) {
+        if (s->restart || s->closing) { pthread_mutex_unlock(&s->mx); return -1; }
+        long long room = SRC_CAP - (s->hi - s->lo);
+        if (!room) {
+            long long keep = s->rpos - SRC_BACK;        /* давно прочитанное — освободить */
+            if (keep > s->hi) keep = s->hi;
+            if (keep > s->lo) s->lo = keep;
+            else cond_wait_ms(&s->cv, &s->mx, 200);   /* полно: ждать читателя */
+            continue;
+        }
+        size_t k = n < (size_t)room ? n : (size_t)room, at = (size_t)(s->hi % SRC_CAP);
+        size_t first = SRC_CAP - at < k ? SRC_CAP - at : k;
+        memcpy(s->buf + at, d, first);
+        memcpy(s->buf, d + first, k - first);
+        s->hi += (long long)k;
+        d += k;
+        n -= k;
+        pthread_cond_broadcast(&s->cv);
+    }
+    pthread_mutex_unlock(&s->mx);
+    return 0;
+}
+
+static size_t cb_src(char *d, size_t sz, size_t n, void *u)
+{
+    src_t *src = u;
+    stream_t *s = &src->s;
+    size_t len = sz * n;
+    if (s->status != 200 && s->status != 206) { s->failed = 1; return 0; }
+    if (!s->fetch_started) {
+        /* откуда на самом деле начались данные: 206 — из Content-Range, 200 — с нуля */
+        s->fetch_started = 1;
+        if (s->status == 200 && s->clen >= 0) s->total = s->clen;
+        long long actual = s->status == 206 ? s->cr_start : 0;
+        if (actual != s->fetch_from) {
+            if (actual > s->fetch_from || ctr_init(s, actual)) { s->failed = 1; return 0; }
+            s->skip = s->fetch_from - actual;
+        }
+        if (s->total > 0) {
+            pthread_mutex_lock(&src->mx);
+            src->total = s->total;
+            pthread_mutex_unlock(&src->mx);
         }
     }
+    unsigned char out[65536 + 32];
+    size_t off = 0;
+    while (off < len) {
+        size_t in = len - off > 65536 ? 65536 : len - off, chunk = in;
+        const unsigned char *p = (unsigned char *)d + off;
+        if (s->enc) {
+            int ol = 0;
+            if (!EVP_DecryptUpdate(s->ctx, out, &ol, p, (int)chunk)) { s->failed = 1; return 0; }
+            p = out; chunk = (size_t)ol;
+        }
+        if (s->skip > 0) {
+            size_t d0 = s->skip > (long long)chunk ? chunk : (size_t)s->skip;
+            s->skip -= (long long)d0; p += d0; chunk -= d0;
+        }
+        if (chunk && src_put(src, p, chunk)) return 0;
+        off += in;
+    }
+    return len;
+}
 
-    /* MPD начал трек (не перемотка) — соседей заранее */
-    if (!s.head_only && (!s.ranged || s.req_start == 0)) prefetch_next(tid);
+static int cb_src_prog(void *u, curl_off_t dt, curl_off_t dn, curl_off_t ut, curl_off_t un)
+{
+    src_t *s = u;
+    (void)dt; (void)dn; (void)ut; (void)un;
+    return s->restart || s->closing;                 /* перемотка или файл закрыт — бросить запрос */
+}
 
+/* один запрос к CDN с from: 0 — ответ дочитан, 1 — брошен (перемотка, закрытие), -1 — ошибка */
+static int src_fetch(src_t *src, const finfo_t *fi, long long from)
+{
+    stream_t *s = &src->s;
+    CURL *c = curl_easy_init();
+    if (!c) return -1;
+    char range[48];
+    s->status = 0; s->clen = -1; s->cr_start = 0; s->failed = 0;
+    s->fetch_from = from; s->fetch_started = 0; s->skip = 0;
+    curl_easy_setopt(c, CURLOPT_SHARE, g_share);
+    curl_easy_setopt(c, CURLOPT_URL, fi->url);
+    curl_easy_setopt(c, CURLOPT_USERAGENT, USER_AGENT);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, cb_hdr);
+    curl_easy_setopt(c, CURLOPT_HEADERDATA, s);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb_src);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, src);
+    curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, cb_src_prog);
+    curl_easy_setopt(c, CURLOPT_XFERINFODATA, src);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1L);  /* 30 с без данных — докачка новым запросом */
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 30L);
+    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(c, CURLOPT_BUFFERSIZE, 65536L);
+    if (from > 0) {
+        snprintf(range, sizeof range, "%lld-", from);
+        curl_easy_setopt(c, CURLOPT_RANGE, range);
+    }
+    CURLcode rc = curl_easy_perform(c);
+    long code = 0, nc = 0, redir = 0;
+    double tls = 0, ttfb = 0;
+    char *eff = NULL;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_getinfo(c, CURLINFO_NUM_CONNECTS, &nc);
+    curl_easy_getinfo(c, CURLINFO_REDIRECT_COUNT, &redir);
+    curl_easy_getinfo(c, CURLINFO_APPCONNECT_TIME, &tls);
+    curl_easy_getinfo(c, CURLINFO_STARTTRANSFER_TIME, &ttfb);
+    curl_easy_getinfo(c, CURLINFO_EFFECTIVE_URL, &eff);
+    if (g_verbose) {
+        char host[128] = "";
+        const char *h = eff ? strstr(eff, "://") : NULL;
+        if (h) snprintf(host, sizeof host, "%.*s", (int)strcspn(h + 3, "/"), h + 3);
+        logm(1, "CDN %s с %lld: соединений %ld, редиректов %ld, TLS %.3f, первый байт %.3f с",
+             host, from, nc, redir, tls, ttfb);
+    }
+    curl_easy_cleanup(c);
+    if (rc == CURLE_OK) return 0;
+    if (src->restart || src->closing) return 1;
+    logm(0, "трек %s: CDN %s (HTTP %ld, с %lld)", src->tid, curl_easy_strerror(rc), code, from);
+    return -1;
+}
+
+static void *src_thread(void *arg)
+{
+    src_t *src = arg;
     finfo_t fi;
     char err[300];
-    int from_mem = 0;
-    pre_t pre;
-    if (!s.head_only && s.req_end < 0 && pre_take(tid, &pre)) {
-        long long a = s.ranged ? s.req_start : 0;
-        if (a < (long long)pre.len) {
-            from_mem = 1;
-            s.total = pre.total;
-            s.mime = !strcmp(pre.codec, "mp3") ? "audio/mpeg" : !strncmp(pre.codec, "flac", 4) ? "audio/flac"
-                   : !strcmp(pre.codec, "aac") ? "audio/aac" : "application/octet-stream";
-            write_codec(tid, pre.codec);
-            if (send_head(&s) || send_all(fd, pre.data + a, pre.len - (size_t)a)) s.cut = 1;
-            else s.sent = (long long)pre.len - a;
-            logm(1, "трек %s: начало из памяти", tid);
+    int fails = 0, have_fi = 0;
+    pthread_mutex_lock(&src->mx);
+    for (;;) {
+        while (!src->closing && !src->restart && (src->done || src->failed))
+            pthread_cond_wait(&src->cv, &src->mx);
+        if (src->closing) break;
+        if (src->restart) {                          /* читатель уже поставил lo = hi = rpos */
+            src->restart = src->done = src->failed = 0;
+            fails = 0;
         }
-        free(pre.data);
-    }
-    for (int attempt = 0; attempt < 2 && !from_mem; attempt++) {
-        if (file_info(tid, &fi, err, sizeof err)) {
-            logm(0, "трек %s: %s", tid, err);
-            reply_json_err(fd, 502, err);
-            return;
-        }
-        if (!s.head_only) write_codec(tid, fi.codec);
-        stream_setup(&s, &fi);
-        long long start = s.ranged ? s.req_start : 0;
-        if (ctr_init(&s, start)) { reply_json_err(fd, 500, "AES init"); return; }
-        s.failed = 0;
-        int r = cdn_fetch(&s, &fi, start);
-        if (s.headers_sent || r == 1) break;
-        /* до клиента ещё ничего не ушло: ссылка протухла — взять новую */
-        logm(0, "трек %s: CDN HTTP %ld, новая ссылка", tid, s.status);
-        cache_drop(tid);
-        if (attempt == 1) { reply_json_err(fd, 502, "CDN error"); goto out; }
-    }
+        long long from = src->hi;
+        if (src->total >= 0 && from >= src->total) { src->done = 1; continue; }
+        pthread_mutex_unlock(&src->mx);
 
-    if (!s.head_only && s.headers_sent && !s.cut) {
-        /* обрыв со стороны CDN (или начало было из памяти): докачать с того же места */
-        long long base = s.ranged ? s.req_start : 0;
-        long long want = s.total > 0 ? (s.req_end >= 0 && s.req_end < s.total ? s.req_end + 1 : s.total) - base : -1;
-        for (int retry = 0; retry < 4 && want > 0 && s.sent < want && !s.cut; retry++) {
-            long long pos = base + s.sent;
-            if (retry || !from_mem) {
-                logm(0, "трек %s: докачка с %lld", tid, pos);
-                cache_drop(tid);
-            }
-            if (file_info(tid, &fi, err, sizeof err)) break;
-            stream_setup(&s, &fi);
-            if (ctr_init(&s, pos)) break;
-            s.ranged = 1;                     /* заголовки уже отправлены, дальше только тело */
-            if (cdn_fetch(&s, &fi, pos) == 1) break;
+        int r = -1;
+        if (fails) { cache_drop(src->tid); have_fi = 0; }   /* ссылка могла протухнуть — новая */
+        if (!have_fi && file_info(src->tid, &fi, err, sizeof err)) {
+            logm(0, "трек %s: %s", src->tid, err);
+        } else {
+            have_fi = 1;
+            stream_setup(&src->s, &fi);
+            r = ctr_init(&src->s, from) ? -1 : src_fetch(src, &fi, from);
         }
+
+        pthread_mutex_lock(&src->mx);
+        if (src->closing || src->restart) continue;
+        if (src->total >= 0 ? src->hi >= src->total : r == 0) {
+            if (src->total < 0) src->total = src->hi;
+            src->done = 1;
+        } else {
+            if (src->hi > from) fails = 0;
+            if (++fails > 4) {
+                logm(0, "трек %s: CDN не отдаёт файл", src->tid);
+                src->failed = 1;
+            } else {
+                logm(0, "трек %s: докачка с %lld", src->tid, src->hi);
+                pthread_mutex_unlock(&src->mx);
+                usleep(300000 * fails);
+                pthread_mutex_lock(&src->mx);
+            }
+        }
+        pthread_cond_broadcast(&src->cv);
     }
-out:
-    if (s.ctx) EVP_CIPHER_CTX_free(s.ctx);
+    pthread_mutex_unlock(&src->mx);
+    src_unref(src);
+    return NULL;
+}
+
+static src_t *src_open(const char *tid, unsigned gen)
+{
+    src_t *s = calloc(1, sizeof *s);
+    if (!s) return NULL;
+    if (!(s->buf = malloc(SRC_CAP))) { free(s); return NULL; }
+    snprintf(s->tid, sizeof s->tid, "%s", tid);
+    s->gen = gen;
+    s->total = s->s.total = s->s.clen = -1;
+    s->refs = 2;                                     /* читатель и поток докачки */
+    pthread_mutex_init(&s->mx, NULL);
+    cond_init(&s->cv);
+    pre_t pre;
+    if (pre_take(tid, &pre)) {
+        size_t k = pre.len < SRC_CAP ? pre.len : SRC_CAP;
+        memcpy(s->buf, pre.data, k);
+        s->hi = (long long)k;
+        s->total = s->s.total = pre.total;
+        free(pre.data);
+        logm(1, "трек %s: начало из памяти", tid);
+    }
+    pthread_t th;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&at, 512 * 1024);
+    if (pthread_create(&th, &at, src_thread, s)) { s->refs = 1; s->failed = 1; }
+    pthread_attr_destroy(&at);
+    return s;
+}
+
+/* поток докачки заканчивается сам, когда бросит запрос */
+static void src_close(src_t *s)
+{
+    if (!s) return;
+    pthread_mutex_lock(&s->mx);
+    s->closing = 1;
+    pthread_cond_broadcast(&s->cv);
+    pthread_mutex_unlock(&s->mx);
+    src_unref(s);
+}
+
+/* до n байт с места чтения: сколько прочитано, 0 — конец файла, -1 — файл не идёт или команда плееру */
+static long src_read(src_t *s, void *out, size_t n)
+{
+    long r = -1;
+    pthread_mutex_lock(&s->mx);
+    while (g_gen == s->gen) {
+        if (s->rpos < s->lo || s->rpos > s->hi + SRC_AHEAD) {   /* перемотка мимо окна */
+            s->lo = s->hi = s->rpos;
+            s->restart = 1;
+            pthread_cond_broadcast(&s->cv);
+        }
+        if (s->rpos < s->hi) {
+            size_t k = (size_t)(s->hi - s->rpos) < n ? (size_t)(s->hi - s->rpos) : n;
+            size_t at = (size_t)(s->rpos % SRC_CAP), first = SRC_CAP - at < k ? SRC_CAP - at : k;
+            memcpy(out, s->buf + at, first);
+            memcpy((unsigned char *)out + first, s->buf, k - first);
+            s->rpos += (long long)k;
+            pthread_cond_broadcast(&s->cv);
+            r = (long)k;
+            break;
+        }
+        if (s->total >= 0 && s->rpos >= s->total) { r = 0; break; }
+        if (s->failed) break;
+        if (g_src_idle) {
+            pthread_mutex_unlock(&s->mx);
+            g_src_idle();
+            pthread_mutex_lock(&s->mx);
+        }
+        cond_wait_ms(&s->cv, &s->mx, 50);
+    }
+    pthread_mutex_unlock(&s->mx);
+    return r;
+}
+
+static long src_read_full(src_t *s, void *out, size_t n)
+{
+    size_t got = 0;
+    while (got < n) {
+        long r = src_read(s, (unsigned char *)out + got, n - got);
+        if (r < 0) return -1;
+        if (!r) break;
+        got += (size_t)r;
+    }
+    return (long)got;
+}
+
+static void src_seek(src_t *s, long long pos)
+{
+    pthread_mutex_lock(&s->mx);
+    s->rpos = pos < 0 ? 0 : pos;
+    pthread_cond_broadcast(&s->cv);                  /* докачка ждёт места в кольце — оно могло появиться */
+    pthread_mutex_unlock(&s->mx);
+}
+
+static long long src_tell(src_t *s)
+{
+    pthread_mutex_lock(&s->mx);
+    long long r = s->rpos;
+    pthread_mutex_unlock(&s->mx);
+    return r;
+}
+
+static long long src_len(src_t *s)
+{
+    pthread_mutex_lock(&s->mx);
+    long long r = s->total;
+    pthread_mutex_unlock(&s->mx);
+    return r;
+}
+
+/* ---------- декодеры: FLAC (libFLAC), MP3 (libmad) — в int32, каналы чередуются ---------- */
+#define MP3_IN 32768
+
+typedef struct {
+    src_t *src;
+    int flac;
+    unsigned rate, ch, bits;                         /* bits — значащих в сэмпле int32 */
+    double dur;                                      /* с, 0 — неизвестна */
+    int kbps;
+    int32_t *pcm;                                    /* декодированное */
+    size_t pn, pcap;                                 /* кадров в pcm; вместимость, кадров */
+    int held;                                        /* pcm от перемотки FLAC — отдать до декодирования */
+    FLAC__StreamDecoder *fl;
+    FLAC__uint64 samples;
+    struct mad_stream ms;
+    struct mad_frame mf;
+    struct mad_synth sy;
+    int mad, first, eof;                             /* first — первый кадр разобран, ещё не сыгран */
+    unsigned char *in;
+    long long data0;                                 /* начало кадров (после ID3v2) */
+    unsigned long xframes;                           /* кадров по заголовку Xing, 0 — нет */
+    unsigned char toc[100];
+    int toc_ok;
+    long long drop, left, total_out;                 /* сэмплов: выбросить в начале; осталось выдать (-1 — не считать) */
+} dec_t;
+
+static int pcm_room(dec_t *d, size_t frames)
+{
+    if (d->pn + frames <= d->pcap) return 0;
+    size_t c = d->pcap ? d->pcap : 4096;
+    while (c < d->pn + frames) c *= 2;
+    int32_t *p = realloc(d->pcm, c * d->ch * sizeof *p);
+    if (!p) return -1;
+    d->pcm = p;
+    d->pcap = c;
+    return 0;
+}
+
+static FLAC__StreamDecoderReadStatus fl_read(const FLAC__StreamDecoder *f, FLAC__byte b[], size_t *n, void *u)
+{
+    (void)f;
+    long r = src_read(((dec_t *)u)->src, b, *n);
+    *n = r > 0 ? (size_t)r : 0;
+    return r < 0 ? FLAC__STREAM_DECODER_READ_STATUS_ABORT
+         : r ? FLAC__STREAM_DECODER_READ_STATUS_CONTINUE : FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+}
+
+static FLAC__StreamDecoderSeekStatus fl_seek(const FLAC__StreamDecoder *f, FLAC__uint64 off, void *u)
+{
+    (void)f;
+    src_seek(((dec_t *)u)->src, (long long)off);
+    return FLAC__STREAM_DECODER_SEEK_STATUS_OK;
+}
+
+static FLAC__StreamDecoderTellStatus fl_tell(const FLAC__StreamDecoder *f, FLAC__uint64 *off, void *u)
+{
+    (void)f;
+    *off = (FLAC__uint64)src_tell(((dec_t *)u)->src);
+    return FLAC__STREAM_DECODER_TELL_STATUS_OK;
+}
+
+static FLAC__StreamDecoderLengthStatus fl_len(const FLAC__StreamDecoder *f, FLAC__uint64 *len, void *u)
+{
+    (void)f;
+    long long t = src_len(((dec_t *)u)->src);
+    if (t < 0) return FLAC__STREAM_DECODER_LENGTH_STATUS_UNSUPPORTED;
+    *len = (FLAC__uint64)t;
+    return FLAC__STREAM_DECODER_LENGTH_STATUS_OK;
+}
+
+static FLAC__bool fl_eof(const FLAC__StreamDecoder *f, void *u)
+{
+    (void)f;
+    src_t *s = ((dec_t *)u)->src;
+    long long t = src_len(s);
+    return t >= 0 && src_tell(s) >= t;
+}
+
+static FLAC__StreamDecoderWriteStatus fl_write(const FLAC__StreamDecoder *f, const FLAC__Frame *fr,
+                                              const FLAC__int32 *const buf[], void *u)
+{
+    dec_t *d = u;
+    (void)f;
+    unsigned n = fr->header.blocksize;
+    if (fr->header.channels != d->ch || fr->header.bits_per_sample != d->bits || pcm_room(d, n))
+        return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+    int32_t *o = d->pcm + d->pn * d->ch;
+    for (unsigned i = 0; i < n; i++)
+        for (unsigned c = 0; c < d->ch; c++) *o++ = buf[c][i];
+    d->pn += n;
+    return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+}
+
+static void fl_meta(const FLAC__StreamDecoder *f, const FLAC__StreamMetadata *m, void *u)
+{
+    dec_t *d = u;
+    (void)f;
+    if (m->type != FLAC__METADATA_TYPE_STREAMINFO) return;
+    d->rate = m->data.stream_info.sample_rate;
+    d->ch = m->data.stream_info.channels;
+    d->bits = m->data.stream_info.bits_per_sample;
+    d->samples = m->data.stream_info.total_samples;
+}
+
+static void fl_error(const FLAC__StreamDecoder *f, FLAC__StreamDecoderErrorStatus st, void *u)
+{
+    (void)f; (void)u;
+    logm(1, "FLAC: %s", FLAC__StreamDecoderErrorStatusString[st]);
+}
+
+/* как MPD: округлить, обрезать, 24 бита */
+static int32_t mad24(mad_fixed_t s)
+{
+    s += 1L << (MAD_F_FRACBITS - 24);
+    if (s >= MAD_F_ONE) s = MAD_F_ONE - 1;
+    else if (s < -MAD_F_ONE) s = -MAD_F_ONE;
+    return s >> (MAD_F_FRACBITS + 1 - 24);
+}
+
+/* ещё данных для libmad: недоразобранное — в начало буфера, дочитать; 0 — конец уже отдан, -1 — ошибка */
+static int mp3_fill(dec_t *d)
+{
+    if (d->eof) return 0;
+    size_t keep = 0;
+    if (d->ms.next_frame) {
+        keep = (size_t)(d->ms.bufend - d->ms.next_frame);
+        if (keep >= MP3_IN) keep = 0;                /* мусор без кадров — мимо */
+        memmove(d->in, d->ms.next_frame, keep);
+    }
+    long r = src_read(d->src, d->in + keep, MP3_IN - keep);
+    if (r < 0) return -1;
+    if (!r) {                                        /* конец: libmad нужны нули за последним кадром */
+        memset(d->in + keep, 0, MAD_BUFFER_GUARD);
+        keep += MAD_BUFFER_GUARD;
+        d->eof = 1;
+    } else {
+        keep += (size_t)r;
+    }
+    mad_stream_buffer(&d->ms, d->in, keep);
+    d->ms.error = MAD_ERROR_NONE;
+    return 1;
+}
+
+/* следующий кадр в d->mf: 1, конец файла — 0, ошибка — -1 */
+static int mp3_frame(dec_t *d)
+{
+    for (;;) {
+        if (!d->ms.buffer || d->ms.error == MAD_ERROR_BUFLEN) {
+            int r = mp3_fill(d);
+            if (r <= 0) return r;
+        }
+        if (!mad_frame_decode(&d->mf, &d->ms)) return 1;
+        if (d->ms.error != MAD_ERROR_BUFLEN && !MAD_RECOVERABLE(d->ms.error)) return -1;
+    }
+}
+
+/* заголовок Xing/Info в первом кадре (разбор как в MPD): кадров, оглавление; через 120 байт
+ * от его начала — тег LAME с задержкой и добивкой кодера. 1 — кадр служебный, без звука */
+static int mp3_xing(dec_t *d, unsigned spf)
+{
+    struct mad_bitptr p = d->ms.anc_ptr;
+    int bl = (int)d->ms.anc_bitlen, bl0 = bl;
+    if (bl < 16) return 0;
+    unsigned long b = mad_bit_read(&p, 16);
+    bl -= 16;
+    if (b == ('X' << 8 | 'i') || b == ('I' << 8 | 'n')) {
+        if (bl < 16 || mad_bit_read(&p, 16) != (b == ('X' << 8 | 'i') ? ('n' << 8 | 'g') : ('f' << 8 | 'o'))) return 0;
+        bl -= 16;
+    } else if (b != ('n' << 8 | 'g') && b != ('f' << 8 | 'o')) {
+        return 0;
+    }
+    if (bl < 32) return 0;
+    unsigned long fl = mad_bit_read(&p, 32);
+    bl -= 32;
+    if (fl & 1) { if (bl < 32) return 0; d->xframes = mad_bit_read(&p, 32); bl -= 32; }
+    if (fl & 2) { if (bl < 32) return 0; mad_bit_skip(&p, 32); bl -= 32; }
+    if (fl & 4) {
+        if (bl < 800) return 0;
+        for (int i = 0; i < 100; i++) d->toc[i] = (unsigned char)mad_bit_read(&p, 8);
+        d->toc_ok = 1;
+        bl -= 800;
+    }
+    if (fl & 8) { if (bl < 32) return 0; mad_bit_skip(&p, 32); bl -= 32; }
+    int rest = 960 - (bl0 - bl);
+    if (rest < 0) return 1;
+    mad_bit_skip(&p, (unsigned)rest);
+    bl -= rest;
+    if (bl < 288 || !d->xframes) return 1;
+    char enc[10];
+    unsigned ma, mi;
+    for (int i = 0; i < 9; i++) enc[i] = (char)mad_bit_read(&p, 8);
+    enc[9] = 0;
+    if (strncmp(enc, "LAME", 4) || sscanf(enc + 4, "%u.%u", &ma, &mi) != 2) return 1;
+    mad_bit_skip(&p, 16 + 32 + 16 + 16 + 16);       /* версия тега, пик, усиления, флаги */
+    unsigned delay = mad_bit_read(&p, 12), pad = mad_bit_read(&p, 12);
+    /* libmad добавляет 529 сэмплов тишины в начало и убирает столько же в конце */
+    d->drop = delay + 529;
+    d->total_out = (long long)d->xframes * spf - d->drop - (pad > 529 ? pad - 529 : 0);
+    if (d->total_out < 0) d->total_out = 0;
+    d->left = d->total_out;
+    return 1;
+}
+
+static int dec_open_mp3(dec_t *d, char *err, size_t esz)
+{
+    unsigned char h[10];
+    if (!(d->in = malloc(MP3_IN + MAD_BUFFER_GUARD))) return -1;
+    mad_stream_init(&d->ms);
+    mad_frame_init(&d->mf);
+    mad_synth_init(&d->sy);
+    d->mad = 1;
+    d->left = d->total_out = -1;
+    if (src_read_full(d->src, h, sizeof h) == (long)sizeof h && !memcmp(h, "ID3", 3))   /* ID3v2 — мимо */
+        d->data0 = 10 + ((h[6] & 0x7f) << 21 | (h[7] & 0x7f) << 14 | (h[8] & 0x7f) << 7 | (h[9] & 0x7f))
+                 + (h[5] & 0x10 ? 10 : 0);
+    src_seek(d->src, d->data0);
+    if (mp3_frame(d) <= 0) { snprintf(err, esz, "MP3: нет кадров"); return -1; }
+    d->rate = d->mf.header.samplerate;
+    d->ch = MAD_NCHANNELS(&d->mf.header);
+    d->bits = 24;
+    d->kbps = (int)(d->mf.header.bitrate / 1000);
+    unsigned spf = 32 * MAD_NSBSAMPLES(&d->mf.header);
+    long long size = src_len(d->src);
+    if (mp3_xing(d, spf)) {
+        if (d->xframes) d->dur = (double)d->xframes * spf / d->rate;
+        if (d->dur > 0 && size > d->data0) d->kbps = (int)((size - d->data0) * 8 / d->dur / 1000);
+    } else {
+        d->first = 1;                                /* обычный кадр — сыграть и его */
+        if (d->kbps && size > d->data0) d->dur = (double)(size - d->data0) * 8 / (d->kbps * 1000.0);
+    }
+    return 0;
+}
+
+/* формат по первым байтам: fLaC — FLAC, иначе MP3 */
+static int dec_open(dec_t *d, char *err, size_t esz)
+{
+    unsigned char m[4];
+    long r = src_read_full(d->src, m, sizeof m);
+    if (r < (long)sizeof m) { snprintf(err, esz, r < 0 ? "файл не идёт" : "файл пустой"); return -1; }
+    src_seek(d->src, 0);
+    d->flac = !memcmp(m, "fLaC", 4);
+    if (!d->flac) return dec_open_mp3(d, err, esz);
+    if (!(d->fl = FLAC__stream_decoder_new()) ||
+        FLAC__stream_decoder_init_stream(d->fl, fl_read, fl_seek, fl_tell, fl_len, fl_eof, fl_write, fl_meta,
+                                         fl_error, d) != FLAC__STREAM_DECODER_INIT_STATUS_OK ||
+        !FLAC__stream_decoder_process_until_end_of_metadata(d->fl) || !d->rate || !d->ch || d->bits < 4) {
+        snprintf(err, esz, "FLAC не читается");
+        return -1;
+    }
+    if (d->samples) d->dur = (double)d->samples / d->rate;
+    long long size = src_len(d->src);
+    if (size > 0 && d->dur > 0) d->kbps = (int)(size * 8 / d->dur / 1000);
+    return 0;
+}
+
+/* следующая порция в d->pcm: кадров (d->pn), 0 — конец, -1 — ошибка или команда плееру */
+static long dec_read(dec_t *d)
+{
+    if (d->held) { d->held = 0; return (long)d->pn; }
+    d->pn = 0;
+    if (d->flac) {
+        while (!d->pn) {
+            if (FLAC__stream_decoder_get_state(d->fl) == FLAC__STREAM_DECODER_END_OF_STREAM) return 0;
+            if (!FLAC__stream_decoder_process_single(d->fl)) return -1;
+        }
+        return (long)d->pn;
+    }
+    for (;;) {
+        if (d->first) d->first = 0;
+        else {
+            int r = mp3_frame(d);
+            if (r <= 0) return r;
+        }
+        mad_synth_frame(&d->sy, &d->mf);
+        size_t n = d->sy.pcm.length, i = 0;
+        if (d->drop > 0) {
+            i = d->drop < (long long)n ? (size_t)d->drop : n;
+            d->drop -= (long long)i;
+        }
+        if (d->left >= 0) {
+            if ((long long)(n - i) > d->left) n = i + (size_t)d->left;
+            d->left -= (long long)(n - i);
+        }
+        if (i >= n) {
+            if (!d->left) return 0;
+            continue;
+        }
+        if (pcm_room(d, n - i)) return -1;
+        int32_t *o = d->pcm;
+        unsigned sc = d->sy.pcm.channels;
+        for (size_t j = i; j < n; j++)
+            for (unsigned c = 0; c < d->ch; c++) *o++ = mad24(d->sy.pcm.samples[c < sc ? c : 0][j]);
+        d->pn = n - i;
+        return (long)d->pn;
+    }
+}
+
+/* перемотка на t с от начала; 0 — получилось */
+static int dec_seek(dec_t *d, double t)
+{
+    d->pn = 0;
+    d->held = 0;
+    if (t < 0) t = 0;
+    if (d->flac) {
+        FLAC__uint64 s = (FLAC__uint64)(t * d->rate);
+        if (d->samples && s >= d->samples) s = d->samples - 1;
+        if (FLAC__stream_decoder_seek_absolute(d->fl, s)) { d->held = d->pn > 0; return 0; }
+        if (FLAC__stream_decoder_get_state(d->fl) == FLAC__STREAM_DECODER_SEEK_ERROR) FLAC__stream_decoder_flush(d->fl);
+        d->pn = 0;
+        return -1;
+    }
+    long long size = src_len(d->src), pos;
+    if (d->dur <= 0 || size <= d->data0) return -1;
+    double f = t / d->dur > 1 ? 1 : t / d->dur;
+    if (d->toc_ok) {                                 /* VBR: оглавление Xing */
+        double pc = f * 100;
+        int a = pc > 99 ? 99 : (int)pc;
+        double fa = d->toc[a], fb = a < 99 ? d->toc[a + 1] : 256;
+        pos = d->data0 + (long long)((fa + (fb - fa) * (pc - a)) / 256 * (double)(size - d->data0));
+    } else {
+        pos = d->data0 + (long long)(f * (double)(size - d->data0));
+    }
+    src_seek(d->src, pos);
+    mad_stream_finish(&d->ms);
+    mad_stream_init(&d->ms);
+    mad_frame_mute(&d->mf);
+    mad_synth_mute(&d->sy);
+    d->eof = d->first = 0;
+    d->drop = 0;
+    if (d->total_out >= 0) {
+        d->left = d->total_out - (long long)(t * d->rate);
+        if (d->left < 0) d->left = 0;
+    }
+    return 0;
+}
+
+static void dec_close(dec_t *d)
+{
+    if (d->fl) FLAC__stream_decoder_delete(d->fl);
+    if (d->mad) {
+        mad_synth_finish(&d->sy);
+        mad_frame_finish(&d->mf);
+        mad_stream_finish(&d->ms);
+    }
+    free(d->in);
+    free(d->pcm);
 }
 
 /* ---------- JSON: мелочи ---------- */
@@ -898,15 +1381,6 @@ static void names(cJSON *arr, char *out, size_t sz)
         size_t l = strlen(out);
         snprintf(out + l, sz - l, "%s%s", l ? ", " : "", n);
     }
-}
-
-static void write_file(const char *name, const char *s)
-{
-    char path[512];
-    mkdir(g_cover_d, 0755);
-    snprintf(path, sizeof path, "%s/%s", g_cover_d, name);
-    FILE *f = fopen(path, "w");
-    if (f) { fputs(s, f); fclose(f); }
 }
 
 /* ---------- треки ---------- */
@@ -974,18 +1448,6 @@ static cJSON *ql_json(const qlist_t *l)
         cJSON_AddItemToArray(a, o);
     }
     return a;
-}
-
-/* обложка и длительность трека — для /now и /queue */
-static void write_track_files(const qtrack_t *t)
-{
-    char nm[48], d[32];
-    if (t->cover[0]) write_file(t->tid, t->cover);
-    if (t->dur > 0) {
-        snprintf(nm, sizeof nm, "%s.dur", t->tid);
-        snprintf(d, sizeof d, "%.3f", t->dur);
-        write_file(nm, d);
-    }
 }
 
 /* ---------- запросы к Яндексу для клиентов ---------- */
@@ -1139,149 +1601,532 @@ static cJSON *map_json(cJSON *arr, cJSON *(*f)(cJSON *), int max)
     return a;
 }
 
-/* ---------- MPD ---------- */
-static int mpd_connect(void)
+/* ---------- очередь ---------- */
+typedef struct {
+    qtrack_t t;
+    long id;                                         /* номер песни в очереди, растёт */
+    char sid[160], batch[160], seed[160];            /* трек волны: сессия, партия, сид; иначе sid пусто */
+} qent_t;
+
+enum { PS_STOP, PS_PLAY, PS_PAUSE };
+#define W_NONE (1LL << 62)                           /* w0: трек ещё не начат */
+
+/* Очередь и что играет — под g_pl_mx. cur — песня, которую декодирует плеер; aud — что звучит:
+ * при смене трека без паузы cur меняется раньше, aud — когда доиграет буфер ALSA */
+static struct {
+    qent_t *q;
+    int n, cap;
+    long next_id, cur, aud;
+    int state;
+    double seek;                                     /* >= 0 — перемотать cur сюда, с */
+    double s0;                                       /* место aud, с которого идёт счёт, с */
+    long long w0, played;                            /* кадров записано в ALSA к началу aud; сыграно */
+    unsigned rate, ch, bits;                         /* формат aud */
+    int kbps;
+    double dur;
+    char codec[8];
+    int idle;                                        /* вывод ALSA закрыт */
+} g_pl = { .next_id = 1, .cur = -1, .aud = -1, .seek = -1, .w0 = W_NONE, .idle = 1 };
+static pthread_mutex_t g_pl_mx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_pl_cv;                       /* команды плееру, вывод закрыт */
+static pthread_cond_t g_ev_cv;                       /* сменилось, что звучит, — сторожу волны */
+
+/* дальше — под g_pl_mx */
+static int q_idx(long id)
 {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-    struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)g_mpd_port) };
-    inet_pton(AF_INET, g_mpd, &a.sin_addr);
-    struct timeval tv = { 5, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-    if (connect(fd, (struct sockaddr *)&a, sizeof a)) { close(fd); return -1; }
-    char b[128];
-    ssize_t n = recv(fd, b, sizeof b - 1, 0);                 /* OK MPD x.y.z */
-    if (n < 6 || strncmp(b, "OK MPD", 6)) { close(fd); return -1; }
-    return fd;
+    if (id < 0) return -1;
+    for (int i = 0; i < g_pl.n; i++)
+        if (g_pl.q[i].id == id) return i;
+    return -1;
 }
 
-static int mpd_up(void)
+static int q_add(const qtrack_t *v, int n, const char *sid, const char *batch, const char *seed)
 {
-    int fd = mpd_connect();
-    if (fd < 0) return 0;
-    close(fd);
-    return 1;
-}
-
-/* ответ MPD до OK/ACK в out (может быть NULL); cmd — для лога. 0 — OK */
-static int mpd_read(int fd, const char *cmd, buf_t *out)
-{
-    buf_t tmp = {0};
-    buf_t *b = out ? out : &tmp;
-    char rb[4096];
-    int rc = -1;
-    for (;;) {
-        ssize_t n = recv(fd, rb, sizeof rb, 0);
-        if (n <= 0) break;
-        if (buf_add(b, rb, (size_t)n)) break;
-        /* ответ кончается строкой OK\n или ACK ...\n */
-        if (b->n >= 3 && b->p[b->n - 1] == '\n') {
-            char *last = b->p + b->n - 1;
-            while (last > b->p && last[-1] != '\n') last--;
-            if (!strncmp(last, "OK\n", 3)) { rc = 0; break; }
-            if (!strncmp(last, "ACK", 3)) { logm(0, "MPD: %.60s -> %s", cmd, last); break; }
+    if (g_pl.n + n > g_pl.cap) {
+        int c = g_pl.cap ? g_pl.cap : 64;
+        while (c < g_pl.n + n) c *= 2;
+        qent_t *nq = realloc(g_pl.q, (size_t)c * sizeof *nq);
+        if (!nq) return 0;
+        g_pl.q = nq;
+        g_pl.cap = c;
+    }
+    for (int i = 0; i < n; i++) {
+        qent_t *e = &g_pl.q[g_pl.n++];
+        memset(e, 0, sizeof *e);
+        e->t = v[i];
+        e->id = g_pl.next_id++;
+        if (sid) {
+            snprintf(e->sid, sizeof e->sid, "%s", sid);
+            snprintf(e->batch, sizeof e->batch, "%s", batch ? batch : "");
+            snprintf(e->seed, sizeof e->seed, "%s", seed ? seed : "");
         }
     }
-    free(tmp.p);
-    return rc;
+    return n;
 }
 
-/* команда; ответ до OK/ACK в out (может быть NULL). 0 — OK */
-static int mpd_cmd(int fd, const char *cmd, buf_t *out)
+/* место aud, с */
+static double pl_el(void)
 {
-    if (send_all(fd, cmd, strlen(cmd)) || send_all(fd, "\n", 1)) return -1;
-    return mpd_read(fd, cmd, out);
+    if (g_pl.state == PS_STOP) return 0;
+    long long f = g_pl.played - g_pl.w0;
+    return g_pl.s0 + (g_pl.rate && f > 0 ? (double)f / g_pl.rate : 0);
 }
 
-static void mpd_quote(char *dst, size_t sz, const char *src)
+/* играть песню i с места t (state — PS_PLAY или PS_PAUSE) */
+static void pl_go(int i, double t, int state)
 {
-    size_t j = 0;
-    if (sz < 3) { dst[0] = 0; return; }
-    dst[j++] = '"';
-    for (; *src && j + 3 < sz; src++) {
-        if (*src == '"' || *src == '\\') dst[j++] = '\\';
-        dst[j++] = (*src == '\n' || *src == '\r') ? ' ' : *src;
+    g_pl.cur = g_pl.aud = g_pl.q[i].id;
+    g_pl.state = state;
+    g_pl.seek = t;
+    g_pl.s0 = t;
+    g_pl.w0 = W_NONE;
+    g_pl.rate = g_pl.ch = g_pl.bits = 0;
+    g_pl.kbps = 0;
+    g_pl.dur = 0;
+    g_pl.codec[0] = 0;
+    g_gen++;
+    pthread_cond_broadcast(&g_pl_cv);
+    pthread_cond_broadcast(&g_ev_cv);
+}
+
+static void pl_stop(void)
+{
+    g_pl.state = PS_STOP;
+    g_pl.seek = -1;
+    g_pl.s0 = 0;
+    g_pl.w0 = W_NONE;
+    g_gen++;
+    pthread_cond_broadcast(&g_pl_cv);
+    pthread_cond_broadcast(&g_ev_cv);
+}
+
+static void q_clear(void)
+{
+    g_pl.n = 0;
+    g_pl.cur = g_pl.aud = -1;
+    pl_stop();
+}
+
+/* ---------- вывод в ALSA (только поток плеера) ---------- */
+static struct {
+    snd_pcm_t *pcm;
+    unsigned rate, ch, bits;                         /* поток */
+    int bps, shift;                                  /* байт на сэмпл ALSA, сдвиг сэмпла влево */
+    snd_pcm_uframes_t buffer, period;
+    long long w;                                     /* кадров записано с открытия или сброса */
+    unsigned char *cb;
+    size_t ccap;
+    int32_t *hist;                                   /* последние записанные кадры (буфер ALSA) — для паузы */
+    size_t hcap, hpos, hn;                           /* вместимость, куда писать, сколько есть — в кадрах */
+} g_out;
+
+static void out_close(void)
+{
+    if (!g_out.pcm) return;
+    snd_pcm_drop(g_out.pcm);
+    snd_pcm_close(g_out.pcm);
+    g_out.pcm = NULL;
+    g_out.w = 0;
+    logm(1, "ALSA: закрыт");
+    pthread_mutex_lock(&g_pl_mx);
+    g_pl.idle = 1;
+    g_pl.played = 0;
+    pthread_cond_broadcast(&g_pl_cv);
+    pthread_mutex_unlock(&g_pl_mx);
+}
+
+/* Открыть g_dev под формат потока, как MPD с auto_format/auto_resample no: частота — только
+ * своя, сэмпл — без изменений, при нужде в более широком контейнере (младшие биты — нули) */
+static int out_open(unsigned rate, unsigned ch, unsigned bits, char *err, size_t esz)
+{
+    if (g_out.pcm && g_out.rate == rate && g_out.ch == ch && g_out.bits == bits) return 0;
+    out_close();
+    static const struct { snd_pcm_format_t f; int bytes, width; } fm[] = {
+        { SND_PCM_FORMAT_S16_LE, 2, 16 }, { SND_PCM_FORMAT_S24_LE, 4, 24 },
+        { SND_PCM_FORMAT_S32_LE, 4, 32 }, { SND_PCM_FORMAT_S24_3LE, 3, 24 },
+    };
+    static const int o16[] = { 0, 2, 1, 3, -1 }, o24[] = { 1, 2, 3, -1 }, o32[] = { 2, -1 };
+    const int *ord = bits <= 16 ? o16 : bits <= 24 ? o24 : o32;
+    snd_pcm_t *p;
+    snd_pcm_hw_params_t *hw;
+    snd_pcm_sw_params_t *sw;
+    int e = snd_pcm_open(&p, g_dev, SND_PCM_STREAM_PLAYBACK, 0), k = -1;
+    if (e < 0) { snprintf(err, esz, "ALSA %s: %s", g_dev, snd_strerror(e)); return -1; }
+    snd_pcm_hw_params_alloca(&hw);
+    snd_pcm_hw_params_any(p, hw);
+    snd_pcm_hw_params_set_rate_resample(p, hw, 0);
+    snd_pcm_hw_params_set_access(p, hw, SND_PCM_ACCESS_RW_INTERLEAVED);
+    if (snd_pcm_hw_params_set_channels(p, hw, ch) < 0) {
+        snprintf(err, esz, "ALSA: %u канала не поддерживаются", ch);
+        goto fail;
     }
-    dst[j++] = '"';
-    dst[j] = 0;
+    for (const int *o = ord; *o >= 0 && k < 0; o++)
+        if (!snd_pcm_hw_params_test_format(p, hw, fm[*o].f)) k = *o;
+    if (k < 0 || snd_pcm_hw_params_set_format(p, hw, fm[k].f) < 0) {
+        snprintf(err, esz, "ALSA: нет формата для %u бит", bits);
+        goto fail;
+    }
+    if (snd_pcm_hw_params_set_rate(p, hw, rate, 0) < 0) {
+        snprintf(err, esz, "ALSA: частота %u Гц не поддерживается", rate);
+        goto fail;
+    }
+    unsigned bt = 500000, pt;                        /* буфер и период — как у MPD */
+    snd_pcm_hw_params_set_buffer_time_near(p, hw, &bt, NULL);
+    pt = bt / 4;
+    snd_pcm_hw_params_set_period_time_near(p, hw, &pt, NULL);
+    if ((e = snd_pcm_hw_params(p, hw)) < 0) {
+        snprintf(err, esz, "ALSA: %s", snd_strerror(e));
+        goto fail;
+    }
+    snd_pcm_hw_params_get_buffer_size(hw, &g_out.buffer);
+    snd_pcm_hw_params_get_period_size(hw, &g_out.period, NULL);
+    snd_pcm_sw_params_alloca(&sw);
+    snd_pcm_sw_params_current(p, sw);
+    snd_pcm_sw_params_set_start_threshold(p, sw, g_out.buffer - g_out.period);
+    snd_pcm_sw_params_set_avail_min(p, sw, g_out.period);
+    snd_pcm_sw_params(p, sw);
+    g_out.pcm = p;
+    g_out.rate = rate;
+    g_out.ch = ch;
+    g_out.bits = bits;
+    g_out.bps = fm[k].bytes;
+    g_out.shift = fm[k].width - (int)bits;
+    g_out.w = 0;
+    g_out.hpos = g_out.hn = 0;
+    if (g_out.hcap < g_out.buffer * ch) {
+        free(g_out.hist);
+        g_out.hist = malloc(g_out.buffer * ch * sizeof *g_out.hist);
+        g_out.hcap = g_out.hist ? g_out.buffer * ch : 0;
+    }
+    logm(0, "ALSA %s: %u Гц, %u бит в %s, буфер %lu, период %lu", g_dev, rate, bits,
+         snd_pcm_format_name(fm[k].f), (unsigned long)g_out.buffer, (unsigned long)g_out.period);
+    pthread_mutex_lock(&g_pl_mx);
+    g_pl.idle = 0;
+    pthread_mutex_unlock(&g_pl_mx);
+    return 0;
+fail:
+    snd_pcm_close(p);
+    return -1;
 }
 
-/* значение ключа (первое) из ответа MPD; 0 — нет */
-static int kv_str(const char *resp, const char *key, char *out, size_t sz)
+/* кадры int32 -> формат ALSA -> устройство; -1 — устройство отказало */
+static int out_write(const int32_t *s, size_t frames)
 {
-    size_t kl = strlen(key);
-    out[0] = 0;
-    for (const char *p = resp; p && *p; ) {
-        const char *nl = strchr(p, '\n');
-        size_t ll = nl ? (size_t)(nl - p) : strlen(p);
-        if (ll >= kl + 2 && !strncmp(p, key, kl) && p[kl] == ':' && p[kl + 1] == ' ') {
-            snprintf(out, sz, "%.*s", (int)(ll - kl - 2), p + kl + 2);
-            return 1;
+    size_t ns = frames * g_out.ch, need = ns * (size_t)g_out.bps;
+    if (need > g_out.ccap) {
+        unsigned char *nb = realloc(g_out.cb, need);
+        if (!nb) return -1;
+        g_out.cb = nb;
+        g_out.ccap = need;
+    }
+    unsigned char *o = g_out.cb;
+    int sh = g_out.shift;
+    for (size_t i = 0; i < ns; i++) {
+        uint32_t v = (uint32_t)s[i] << sh;
+        o[0] = (unsigned char)v;
+        o[1] = (unsigned char)(v >> 8);
+        if (g_out.bps > 2) o[2] = (unsigned char)(v >> 16);
+        if (g_out.bps > 3) o[3] = (unsigned char)(v >> 24);
+        o += g_out.bps;
+    }
+    size_t hf = g_out.hcap / g_out.ch;               /* копия — в кольцо hist */
+    for (size_t i = frames > hf ? frames - hf : 0; hf && i < frames; ) {
+        size_t k = frames - i < hf - g_out.hpos ? frames - i : hf - g_out.hpos;
+        memcpy(g_out.hist + g_out.hpos * g_out.ch, s + i * g_out.ch, k * g_out.ch * sizeof *s);
+        g_out.hpos = (g_out.hpos + k) % hf;
+        g_out.hn = g_out.hn + k > hf ? hf : g_out.hn + k;
+        i += k;
+    }
+    o = g_out.cb;
+    while (frames) {
+        snd_pcm_sframes_t w = snd_pcm_writei(g_out.pcm, o, frames);
+        if (w == -EAGAIN || w == -EINTR) continue;
+        if (w < 0) {
+            if (snd_pcm_recover(g_out.pcm, (int)w, 1) < 0) {
+                logm(0, "ALSA: %s", snd_strerror((int)w));
+                return -1;
+            }
+            logm(0, "ALSA: %s, дальше", snd_strerror((int)w));
+            continue;
         }
-        p = nl ? nl + 1 : NULL;
+        o += (size_t)w * g_out.ch * (size_t)g_out.bps;
+        frames -= (size_t)w;
+        g_out.w += w;
     }
     return 0;
 }
 
-static long kv_long(const char *resp, const char *key)
-{
-    char v[32];
-    return kv_str(resp, key, v, sizeof v) && v[0] ? strtol(v, NULL, 10) : -1;
-}
+/* Поток ALSA не останавливаем, пока играем: остановка (и пауза ALSA) на I2S гасит такты, ЦАП
+ * потом секунду-другую ловит их заново и молчит. Поэтому записанное, но не сыгранное забираем
+ * назад (snd_pcm_rewind), а когда писать нечего — подкладываем тишину */
 
-static double kv_num(const char *resp, const char *key)
+/* забрать назад несыгранное, кроме периода и ещё 20 мс: указатель DMA на этом драйвере сдвигается
+ * раз в период, и на столько DMA может уже уйти вперёд; keep — копия забранного (освободить).
+ * Сколько кадров забрано */
+static size_t out_unwrite(int32_t **keep)
 {
-    char v[32];
-    return kv_str(resp, key, v, sizeof v) ? strtod(v, NULL) : 0;
-}
-
-/* треки в очередь MPD: все addid одной пачкой, затем все теги; wave_q — хвост запроса волны.
- * Число добавленных (ACK посередине — добавлено то, что до него) */
-static int mpd_add_tracks(int fd, const qtrack_t *v, int n, const char *wave_q)
-{
-    if (n <= 0) return 0;
-    char qb[16], line[2048], q[1100];
-    const char *ext = !strcmp(get_quality(qb, sizeof qb), "lossless") ? "flac" : "mp3";
-    buf_t c = {0}, r = {0};
-    bput(&c, "command_list_ok_begin\n");
-    for (int i = 0; i < n; i++) {
-        snprintf(line, sizeof line, "addid \"http://127.0.0.1:%d/track/%s.%s?a=%s%s\"\n",
-                 g_port, v[i].tid, ext, v[i].aid, wave_q ? wave_q : "");
-        bput(&c, line);
-    }
-    bput(&c, "command_list_end");
-    mpd_cmd(fd, c.p, &r);
-    free(c.p);
-    long *ids = calloc((size_t)n, sizeof *ids);
-    int k = 0;
-    for (char *p = r.p; ids && p && *p && k < n; ) {
-        if (!strncmp(p, "Id: ", 4)) ids[k++] = strtol(p + 4, NULL, 10);
-        p = strchr(p, '\n');
-        if (p) p++;
-    }
-    free(r.p);
-    c = (buf_t){0};
-    bput(&c, "command_list_begin\n");
-    for (int i = 0; i < k; i++) {
-        const qtrack_t *t = &v[i];
-        const char *tag[3] = { "Title", "Artist", "Album" }, *val[3] = { t->title, t->artist, t->album };
-        for (int j = 0; j < 3; j++) {
-            if (!val[j][0]) continue;
-            mpd_quote(q, sizeof q, val[j]);
-            snprintf(line, sizeof line, "addtagid %ld %s %s\n", ids[i], tag[j], q);
-            bput(&c, line);
+    if (keep) *keep = NULL;
+    if (!g_out.pcm) return 0;
+    snd_pcm_sframes_t r = snd_pcm_rewindable(g_out.pcm), m = (snd_pcm_sframes_t)g_out.period + g_out.rate / 50;
+    r = r > m ? r - m : 0;
+    if (r > (snd_pcm_sframes_t)g_out.hn) r = (snd_pcm_sframes_t)g_out.hn;
+    if (r > 0) r = snd_pcm_rewind(g_out.pcm, (snd_pcm_uframes_t)r);
+    if (r <= 0) return 0;
+    size_t n = (size_t)r, hf = g_out.hcap / g_out.ch, at = (g_out.hpos + hf - n) % hf;
+    if (keep && (*keep = malloc(n * g_out.ch * sizeof **keep)))
+        for (size_t i = 0, a = at; i < n; ) {
+            size_t k = n - i < hf - a ? n - i : hf - a;
+            memcpy(*keep + i * g_out.ch, g_out.hist + a * g_out.ch, k * g_out.ch * sizeof **keep);
+            i += k;
+            a = (a + k) % hf;
         }
-        write_track_files(t);
-    }
-    bput(&c, "command_list_end");
-    if (k) mpd_cmd(fd, c.p, NULL);
-    free(c.p);
-    free(ids);
-    return k;
+    g_out.hpos = at;
+    g_out.hn -= n;
+    g_out.w -= r;
+    return n;
 }
 
-/* активный плеер Фокса (naa, scream, mpd...) */
+/* в устройстве меньше периода и 0,2 с — дописать тишины до этого; сколько дописано */
+static size_t out_idle(void)
+{
+    if (!g_out.pcm || snd_pcm_state(g_out.pcm) != SND_PCM_STATE_RUNNING) return 0;
+    snd_pcm_sframes_t av = snd_pcm_avail_update(g_out.pcm), want = (snd_pcm_sframes_t)g_out.period + g_out.rate / 5;
+    if (av < 0) return 0;
+    snd_pcm_sframes_t q = (snd_pcm_sframes_t)g_out.buffer - av, n = want - q;
+    if (n <= 0) return 0;
+    if (n > av) n = av;
+    int32_t *z = calloc((size_t)n * g_out.ch, sizeof *z);
+    if (!z || out_write(z, (size_t)n)) n = 0;
+    free(z);
+    return (size_t)n;
+}
+
+/* ---------- плеер ---------- */
+/* трек, который плеер начал писать в ALSA: станет aud, когда доиграет буфер прошлого */
+static struct {
+    int on;
+    long id;
+    unsigned gen;
+    long long w;                                     /* g_out.w в его начале */
+    double s0, dur;
+    unsigned rate, ch, bits;
+    int kbps;
+    char codec[8];
+} g_pend;
+
+static void pend_set(const qent_t *e, const dec_t *d, unsigned gen, double s0)
+{
+    g_pend.on = 1;
+    g_pend.id = e->id;
+    g_pend.gen = gen;
+    g_pend.w = g_out.w;
+    g_pend.s0 = s0;
+    g_pend.dur = d->dur;
+    g_pend.rate = d->rate;
+    g_pend.ch = d->ch;
+    g_pend.bits = d->bits;
+    g_pend.kbps = d->kbps;
+    snprintf(g_pend.codec, sizeof g_pend.codec, "%s", d->flac ? "FLAC" : "MP3");
+}
+
+/* сколько сыграно; начатый трек зазвучал (или выбран командой) — он теперь aud */
+static void pl_progress(void)
+{
+    snd_pcm_sframes_t dl = 0;
+    if (!g_out.pcm || snd_pcm_delay(g_out.pcm, &dl) < 0 || dl < 0) dl = 0;
+    pthread_mutex_lock(&g_pl_mx);
+    g_pl.played = g_out.w - dl;
+    if (g_pend.on && g_pend.gen == g_gen && (g_pl.aud == g_pend.id || g_pl.played >= g_pend.w)) {
+        g_pend.on = 0;
+        g_pl.aud = g_pend.id;
+        g_pl.s0 = g_pend.s0;
+        g_pl.w0 = g_pend.w;
+        g_pl.dur = g_pend.dur;
+        g_pl.rate = g_pend.rate;
+        g_pl.ch = g_pend.ch;
+        g_pl.bits = g_pend.bits;
+        g_pl.kbps = g_pend.kbps;
+        snprintf(g_pl.codec, sizeof g_pl.codec, "%s", g_pend.codec);
+        pthread_cond_broadcast(&g_ev_cv);
+    }
+    pthread_mutex_unlock(&g_pl_mx);
+}
+
+/* доиграть записанное; 1 — пришла команда */
+static int out_drain(unsigned gen)
+{
+    while (g_out.pcm) {
+        if (g_gen != gen) return 1;
+        snd_pcm_state_t st = snd_pcm_state(g_out.pcm);
+        snd_pcm_sframes_t dl = 0;
+        if (st == SND_PCM_STATE_PREPARED) snd_pcm_start(g_out.pcm);   /* короткий трек не набрал порога */
+        else if (st != SND_PCM_STATE_RUNNING || snd_pcm_delay(g_out.pcm, &dl) < 0 || dl <= 0) return 0;
+        pl_progress();
+        usleep(20000);
+    }
+    return 0;
+}
+
+/* тишина, пока плеер ждёт данных трека: место звучащего трека на неё не сдвигается */
+static void src_idle(void)
+{
+    size_t n = out_idle();
+    if (!n || g_pend.on) return;
+    pthread_mutex_lock(&g_pl_mx);
+    if (g_pl.w0 != W_NONE) g_pl.w0 += (long long)n;
+    pthread_mutex_unlock(&g_pl_mx);
+}
+
+/* Пауза: несыгранное — назад, пока пауза — тишина; при продолжении тишину — назад, несыгранное
+ * пишем заново. Такты I2S всё время идут, ЦАП не замолкает */
+static void pl_pause(unsigned gen)
+{
+    int32_t *keep;
+    snd_pcm_sframes_t dl = 0;
+    if (snd_pcm_delay(g_out.pcm, &dl) < 0) dl = -1;
+    size_t n = out_unwrite(&keep);
+    long long wr = g_out.w;                          /* сюда вернётся несыгранное */
+    logm(1, "пауза: в буфере %ld, забрано назад %zu", (long)dl, n);
+    pthread_mutex_lock(&g_pl_mx);
+    long long w0 = g_pl.w0;
+    if (w0 != W_NONE) {                              /* на паузе место стоит */
+        if (g_pl.rate) g_pl.s0 += (double)(wr - w0) / g_pl.rate;
+        g_pl.w0 = W_NONE;
+    }
+    while (g_pl.state == PS_PAUSE && g_gen == gen && g_pl.seek < 0) {
+        pthread_mutex_unlock(&g_pl_mx);
+        out_idle();
+        pthread_mutex_lock(&g_pl_mx);
+        cond_wait_ms(&g_pl_cv, &g_pl_mx, 50);
+    }
+    int go = g_pl.state == PS_PLAY && g_gen == gen && g_pl.seek < 0;
+    pthread_mutex_unlock(&g_pl_mx);
+    out_unwrite(NULL);                               /* тишину — назад */
+    if (go) {
+        long long at = g_out.w;
+        if (g_pend.on && g_pend.w >= wr) g_pend.w += at - wr;
+        if (keep) out_write(keep, n);
+        pthread_mutex_lock(&g_pl_mx);
+        if (w0 != W_NONE && g_pl.w0 == W_NONE) g_pl.w0 = at;
+        pthread_mutex_unlock(&g_pl_mx);
+        pl_progress();
+    }
+    free(keep);
+}
+
+/* играть трек до конца: 0 — доигран, 1 — команда, -1 — трек не играется, -2 — нет вывода */
+static int play_track(const qent_t *e, unsigned gen, double seek)
+{
+    char err[300] = "";
+    dec_t d;
+    memset(&d, 0, sizeof d);
+    if (access(g_active_f, F_OK)) { logm(0, "Яндекс Музыка не выбрана плеером Фокса"); return -2; }
+    if (!(d.src = src_open(e->t.tid, gen))) return -1;
+    int rc = dec_open(&d, err, sizeof err);
+    if (!rc && seek > 0 && dec_seek(&d, seek)) seek = 0;
+    if (!rc && g_out.pcm && (g_out.rate != d.rate || g_out.ch != d.ch || g_out.bits != d.bits)) {
+        rc = out_drain(gen);                         /* формат другой: сначала доиграть прошлый */
+        if (!rc) out_close();
+    }
+    if (!rc && out_open(d.rate, d.ch, d.bits, err, sizeof err)) rc = -2;
+    if (!rc) {
+        pend_set(e, &d, gen, seek);
+        pl_progress();
+    }
+    while (!rc && g_gen == gen) {
+        pthread_mutex_lock(&g_pl_mx);
+        int st = g_pl.state;
+        double sk = g_pl.seek;
+        g_pl.seek = -1;
+        pthread_mutex_unlock(&g_pl_mx);
+        if (sk >= 0) {                               /* перемотка в этом же треке */
+            out_unwrite(NULL);
+            if (dec_seek(&d, sk)) logm(0, "трек %s: перемотка на %.0f с не вышла", e->t.tid, sk);
+            pend_set(e, &d, gen, sk);
+            pl_progress();
+            continue;
+        }
+        if (st == PS_PAUSE) { pl_pause(gen); continue; }
+        if (st != PS_PLAY) break;
+        long n = dec_read(&d);
+        if (n <= 0) { rc = n ? -1 : 0; break; }
+        for (size_t off = 0; off < d.pn && g_gen == gen; ) {   /* по периоду: команды не ждут */
+            size_t k = d.pn - off < g_out.period ? d.pn - off : g_out.period;
+            if (out_write(d.pcm + off * d.ch, k)) { rc = -2; break; }
+            off += k;
+            pl_progress();
+        }
+    }
+    if (g_gen != gen) {
+        out_unwrite(NULL);                           /* дальше — следующий трек или тишина */
+        rc = 1;
+    } else if (rc == -1 || (rc == -2 && err[0])) {
+        logm(0, "трек %s: %s", e->t.tid, err[0] ? err : "оборвался");
+    }
+    dec_close(&d);
+    src_close(d.src);
+    return rc;
+}
+
+static void *player_thread(void *arg)
+{
+    (void)arg;
+    int errs = 0;
+    pthread_mutex_lock(&g_pl_mx);
+    for (;;) {
+        int i = q_idx(g_pl.cur);
+        if (g_pl.state != PS_PLAY || i < 0) {
+            if (g_pl.state == PS_PLAY) pl_stop();
+            if (g_pl.state == PS_STOP && g_out.pcm) {
+                pthread_mutex_unlock(&g_pl_mx);
+                out_close();
+                pthread_mutex_lock(&g_pl_mx);
+                continue;
+            }
+            if (g_pl.state == PS_PAUSE && g_out.pcm) {   /* пауза между треками: такты не гасить */
+                pthread_mutex_unlock(&g_pl_mx);
+                out_idle();
+                pthread_mutex_lock(&g_pl_mx);
+                cond_wait_ms(&g_pl_cv, &g_pl_mx, 50);
+                continue;
+            }
+            pthread_cond_wait(&g_pl_cv, &g_pl_mx);
+            continue;
+        }
+        qent_t e = g_pl.q[i];
+        unsigned gen = g_gen;
+        double seek = g_pl.seek > 0 ? g_pl.seek : 0;
+        g_pl.seek = -1;
+        pthread_mutex_unlock(&g_pl_mx);
+        int r = play_track(&e, gen, seek);
+        pthread_mutex_lock(&g_pl_mx);
+        if (r == 1 || g_gen != gen) continue;        /* команда: что играть, уже решено */
+        errs = r ? errs + 1 : 0;
+        if (r == -2 || errs >= 3) {                  /* нет вывода или три трека подряд не играют */
+            errs = 0;
+            pl_stop();
+            continue;
+        }
+        i = q_idx(e.id);
+        if (i >= 0 && i + 1 < g_pl.n) {              /* дальше по очереди, без паузы */
+            g_pl.cur = g_pl.q[i + 1].id;
+            continue;
+        }
+        pthread_mutex_unlock(&g_pl_mx);               /* очередь кончилась: доиграть буфер */
+        int c = out_drain(gen);
+        pthread_mutex_lock(&g_pl_mx);
+        if (!c && g_gen == gen) pl_stop();
+    }
+    return NULL;
+}
+
+/* Фокс сейчас за Яндекс Музыкой (файл ставит и убирает /etc/rc.pure/S95ymusic) */
+static int player_active(void)
+{
+    return !access(g_active_f, F_OK);
+}
+
+/* активный плеер Фокса (naa, scream, ymusic...) */
 static void active_service(char *out, size_t sz)
 {
     char b[16384];
@@ -1295,19 +2140,19 @@ static void active_service(char *out, size_t sz)
     if (!out[0]) read_small_file("/tmp/active_service", out, sz);
 }
 
-/* MPD должен быть активным плеером (как кнопка «Яндекс Музыка» на главной) */
-static int ensure_mpd(void)
+/* Яндекс Музыка должна быть плеером Фокса (как кнопка «Яндекс Музыка» на главной) */
+static int ensure_player(void)
 {
     char svc[32];
     struct stat sb;
+    if (player_active() && stat("/etc/usb_to_i2s.state", &sb)) return 0;
     active_service(svc, sizeof svc);
-    if (!strcmp(svc, "mpd") && stat("/etc/usb_to_i2s.state", &sb) && mpd_up()) return 0;
-    logm(0, "переключение на MPD (был %s)", svc[0] ? svc : "?");
+    logm(0, "переключение на Яндекс Музыку (был %s)", svc[0] ? svc : "?");
     CURL *c = curl_easy_init();
     if (c) {
         buf_t b = {0};
         curl_easy_setopt(c, CURLOPT_URL, "http://127.0.0.1/handle_service.php");
-        curl_easy_setopt(c, CURLOPT_POSTFIELDS, "service=mpd");
+        curl_easy_setopt(c, CURLOPT_POSTFIELDS, "service=ymusic");
         curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb_mem);
         curl_easy_setopt(c, CURLOPT_WRITEDATA, &b);
         curl_easy_setopt(c, CURLOPT_TIMEOUT, 30L);
@@ -1316,14 +2161,14 @@ static int ensure_mpd(void)
         curl_easy_cleanup(c);
         free(b.p);
     }
-    for (int i = 0; i < 50 && !mpd_up(); i++) usleep(100000);
-    if (!mpd_up()) return -1;
-    usleep(300000);
-    return 0;
+    for (int i = 0; i < 50 && !player_active(); i++) usleep(100000);
+    return player_active() ? 0 : -1;
 }
 
-/* очередь MPD: заменить (или дописать) и включить с v[start]; число добавленных или -1 */
-static int queue_play(qtrack_t *v, int n, int start, int append, const char *wave_q, char *err, size_t esz)
+/* очередь: заменить (или дописать) и играть с v[start]; sid — треки волны.
+ * Число добавленных, -1 — нечего играть, -2 — плеер не включился */
+static int queue_play(qtrack_t *v, int n, int start, int append, const char *sid, const char *batch,
+                      const char *seed, char *err, size_t esz)
 {
     int m = 0, st = 0;
     for (int i = 0; i < n; i++) {                      /* недоступные — вон */
@@ -1336,66 +2181,30 @@ static int queue_play(qtrack_t *v, int n, int start, int append, const char *wav
         int from = st < m - MAX_QUEUE ? st : m - MAX_QUEUE;
         v += from; m = MAX_QUEUE; st -= from;
     }
-    if (ensure_mpd()) { snprintf(err, esz, "не удалось включить MPD"); return -1; }
-    int fd = mpd_connect();
-    if (fd < 0) { snprintf(err, esz, "MPD не отвечает"); return -1; }
-    buf_t sb = {0};
-    char state[16] = "";
-    if (!append) mpd_cmd(fd, "clear", NULL);
-    mpd_cmd(fd, "status", &sb);
-    long base = kv_long(sb.p, "playlistlength");
-    kv_str(sb.p, "state", state, sizeof state);
-    free(sb.p);
-    int k = mpd_add_tracks(fd, v, m, wave_q);
-    char c[32] = "";
-    if (k && !append) snprintf(c, sizeof c, "play %d", st < k ? st : k - 1);
-    else if (k && strcmp(state, "play")) snprintf(c, sizeof c, "play %ld", base > 0 ? base : 0);
-    if (c[0]) mpd_cmd(fd, c, NULL);
-    close(fd);
-    if (!k) { snprintf(err, esz, "MPD не принял треки"); return -1; }
+    if (ensure_player()) { snprintf(err, esz, "не удалось включить Яндекс Музыку"); return -2; }
+    pthread_mutex_lock(&g_pl_mx);
+    if (!append) q_clear();
+    int base = g_pl.n, k = q_add(v, m, sid, batch, seed);
+    if (k && !append) pl_go(st, 0, PS_PLAY);
+    else if (k && g_pl.state != PS_PLAY) pl_go(base, 0, PS_PLAY);
+    pthread_mutex_unlock(&g_pl_mx);
+    if (!k) { snprintf(err, esz, "нет памяти под очередь"); return -1; }
     return k;
 }
 
-/* песня из ответа MPD (currentsong или кусок playlistinfo) */
-static cJSON *song_json(const char *blk)
+/* песня очереди для /now и /queue; e NULL — пустая */
+static cJSON *ent_json(const qent_t *e, int pos)
 {
-    char file[2048], tid[32] = "", aid[32] = "", v[2048], nm[48];
-    kv_str(blk, "file", file, sizeof file);
-    const char *tr = strstr(file, "127.0.0.1:") ? strstr(file, "/track/") : NULL;
-    if (tr) {
-        size_t i = 0;
-        for (tr += 7; isdigit((unsigned char)*tr) && i + 1 < sizeof tid; ) tid[i++] = *tr++;
-        tid[i] = 0;
-        const char *qm = strchr(file, '?');
-        if (qm) query_get(qm + 1, "a", aid, sizeof aid);
-    }
     cJSON *o = cJSON_CreateObject();
-    cJSON_AddNumberToObject(o, "song", kv_long(blk, "Pos") > 0 ? kv_long(blk, "Pos") : 0);
-    cJSON_AddBoolToObject(o, "ym", tid[0] != 0);
-    cJSON_AddStringToObject(o, "id", tid);
-    cJSON_AddStringToObject(o, "a", aid);
-    if (!kv_str(blk, "Title", v, sizeof v)) {
-        const char *sl = strrchr(file, '/');
-        snprintf(v, sizeof v, "%s", sl ? sl + 1 : file);
-    }
-    cJSON_AddStringToObject(o, "title", v);
-    kv_str(blk, "Artist", v, sizeof v);
-    cJSON_AddStringToObject(o, "artist", v);
-    kv_str(blk, "Album", v, sizeof v);
-    cJSON_AddStringToObject(o, "album", v);
-    double d = kv_num(blk, "duration");
-    if (d <= 0) d = kv_num(blk, "Time");
-    v[0] = 0;
-    if (tid[0]) {                                     /* MPD узнаёт длину потока, только начав его */
-        char p[512];
-        snprintf(nm, sizeof nm, "%s.dur", tid);
-        snprintf(p, sizeof p, "%s/%s", g_cover_d, nm);
-        if (d <= 0 && !read_small_file(p, v, sizeof v)) d = strtod(v, NULL);
-        snprintf(p, sizeof p, "%s/%s", g_cover_d, tid);
-        read_small_file(p, v, sizeof v);
-    }
-    cJSON_AddNumberToObject(o, "dur", d);
-    cJSON_AddStringToObject(o, "cover", v);
+    cJSON_AddNumberToObject(o, "song", pos > 0 ? pos : 0);
+    cJSON_AddBoolToObject(o, "ym", e != NULL);
+    cJSON_AddStringToObject(o, "id", e ? e->t.tid : "");
+    cJSON_AddStringToObject(o, "a", e ? e->t.aid : "");
+    cJSON_AddStringToObject(o, "title", e ? e->t.title : "");
+    cJSON_AddStringToObject(o, "artist", e ? e->t.artist : "");
+    cJSON_AddStringToObject(o, "album", e ? e->t.album : "");
+    cJSON_AddNumberToObject(o, "dur", e ? e->t.dur : 0);
+    cJSON_AddStringToObject(o, "cover", e ? e->t.cover : "");
     return o;
 }
 
@@ -1412,7 +2221,7 @@ enum { WV_NONE, WV_FWD, WV_BACK, WV_DISLIKE };       /* как ушли с тр�
 
 /* что играет в волне и что уже сыграно — под g_wv_mx */
 static struct {
-    long songid;                                     /* текущая песня MPD — по сторожу */
+    long songid;                                     /* что звучит — по сторожу */
     double pos, pos_t;                               /* её место при последнем событии и когда */
     int playing;
     char hist[WAVE_HIST][80];                        /* id[:альбом], старые первыми */
@@ -1468,51 +2277,20 @@ static void rotor_feedback(const char *sid, const char *batch, const char *type,
     free(esid); free(body); cJSON_Delete(o);
 }
 
-/* хвост ссылки на трек волны: &w=сессия&b=партия&s=сид */
-static void wave_query(char *out, size_t sz, const char *sid, const char *batch, const char *seed)
-{
-    char *e1 = url_esc(sid), *e2 = url_esc(batch ? batch : ""), *e3 = url_esc(seed);
-    snprintf(out, sz, "&w=%s&b=%s&s=%s", e1, e2, e3);
-    free(e1); free(e2); free(e3);
-}
-
 static void *wave_thread(void *arg)
 {
     wave_t *w = arg;
     pthread_mutex_lock(&g_wave_lock);
 
-    buf_t st = {0}, pl = {0};
     char (*next)[80] = NULL;                         /* что ещё в очереди после текущей */
     int nn = 0;
     cJSON *queue = NULL, *body = NULL, *r = NULL;
-    int fd = mpd_connect();
-    if (fd < 0) { logm(0, "волна: нет связи с MPD"); goto done; }
-    if (mpd_cmd(fd, "status", &st)) goto close_mpd;
-    long len = kv_long(st.p, "playlistlength"), song = kv_long(st.p, "song");
-    if (len < 0 || song < 0) goto close_mpd;
-    if (len - song - 1 >= WAVE_LOW) goto close_mpd;
-
-    /* что уже стоит после текущей — чтобы не добавить повтор */
-    next = calloc((size_t)len + 1, sizeof *next);
-    if (next && !mpd_cmd(fd, "playlistinfo", &pl)) {
-        char tid[32] = "";
-        long pos = -1;
-        for (char *line = pl.p; line && *line; ) {
-            char *nl = strchr(line, '\n');
-            if (nl) *nl = 0;
-            if (!strncmp(line, "file: ", 6)) {
-                char *t = strstr(line, "/track/");
-                size_t i = 0;
-                for (t = t ? t + 7 : NULL; t && isdigit((unsigned char)*t) && i + 1 < sizeof tid; ) tid[i++] = *t++;
-                tid[i] = 0;
-            } else if (!strncmp(line, "Pos: ", 5)) {
-                pos = strtol(line + 5, NULL, 10);
-            } else if (!strncmp(line, "Id: ", 4) && pos > song && tid[0] && nn < len) {
-                snprintf(next[nn++], sizeof next[0], "%s", tid);
-            }
-            line = nl ? nl + 1 : NULL;
-        }
-    }
+    pthread_mutex_lock(&g_pl_mx);
+    int len = g_pl.n, song = q_idx(g_pl.aud);
+    if (song >= 0 && len - song - 1 < WAVE_LOW && (next = calloc((size_t)len + 1, sizeof *next)))
+        for (int i = song + 1; i < len; i++) snprintf(next[nn++], sizeof next[0], "%s", g_pl.q[i].t.tid);
+    pthread_mutex_unlock(&g_pl_mx);
+    if (!next) goto done;
 
     /* сыгранное до текущего включительно — как queue у приложения */
     queue = cJSON_CreateArray();
@@ -1545,8 +2323,6 @@ static void *wave_thread(void *arg)
     }
     const char *sid = cJSON_GetStringValue(cJSON_GetObjectItem(res, "radioSessionId"));
     if (!sid) sid = w->sid;
-    char wq[800];
-    wave_query(wq, sizeof wq, sid, cJSON_GetStringValue(cJSON_GetObjectItem(res, "batchId")), w->seed);
     qlist_t ql = {0};
     cJSON *it;
     cJSON_ArrayForEach(it, cJSON_GetObjectItem(res, "sequence")) ql_push(&ql, cJSON_GetObjectItem(it, "track"));
@@ -1556,106 +2332,75 @@ static void *wave_thread(void *arg)
         for (int i = 0; i < ql.n; i++)
             if (ql.v[i].ok && (pass || !(id_in(w->hist, w->hn, ql.v[i].tid) || id_in(next, nn, ql.v[i].tid))))
                 ql.v[m++] = ql.v[i];
-    if (m) logm(1, "волна: +%d в очередь (прислано %d)", mpd_add_tracks(fd, ql.v, m, wq), ql.n);
-    free(ql.v);
+    pthread_mutex_lock(&g_pl_mx);
+    if (m) {
+        int k = q_add(ql.v, m, sid, cJSON_GetStringValue(cJSON_GetObjectItem(res, "batchId")), w->seed);
+        logm(1, "волна: +%d в очередь (прислано %d)", k, ql.n);
+    }
     /* очередь не растёт бесконечно, но и не сдвигается под приложением: сыгранное
      * убираем редко (за WAVE_KEEP_MAX — примерно сутки подряд), оставляя WAVE_KEEP */
+    song = q_idx(g_pl.aud);
     if (song > WAVE_KEEP_MAX) {
-        char cmd[64];
-        snprintf(cmd, sizeof cmd, "delete 0:%ld", song - WAVE_KEEP);
-        mpd_cmd(fd, cmd, NULL);
+        int k = song - WAVE_KEEP;
+        memmove(g_pl.q, g_pl.q + k, (size_t)(g_pl.n - k) * sizeof *g_pl.q);
+        g_pl.n -= k;
     }
-close_mpd:
-    close(fd);
+    pthread_mutex_unlock(&g_pl_mx);
+    free(ql.v);
 done:
     cJSON_Delete(r);
     cJSON_Delete(body);
     cJSON_Delete(queue);
-    free(st.p); free(pl.p); free(next);
+    free(next);
     pthread_mutex_unlock(&g_wave_lock);
     free(w);
     return NULL;
 }
 
-/* номер трека Яндекса у песни pos очереди MPD; 0 — нет */
-static int queue_tid(int fd, long pos, char *out, size_t sz)
-{
-    char cmd[48];
-    buf_t r = {0};
-    out[0] = 0;
-    snprintf(cmd, sizeof cmd, "playlistinfo %ld", pos);
-    if (!mpd_cmd(fd, cmd, &r) && r.p) {
-        char *t = strstr(r.p, "/track/");
-        for (size_t i = 0; t && isdigit((unsigned char)t[7 + i]) && i + 1 < sz; i++) {
-            out[i] = t[7 + i];
-            out[i + 1] = 0;
-        }
-    }
-    free(r.p);
-    return out[0] != 0;
-}
-
-/* Соседи трека в очереди — заранее: начало файла в памяти (pre_fill), заодно
+/* Соседи песни в очереди — заранее: начало файла в памяти (pre_fill), заодно
  * ссылка в кэше и соединения в общем пуле */
 static void *prefetch_thread(void *arg)
 {
-    char *tid = arg, cmd[96], next[32] = "", prev[32] = "";
+    long id = (long)(intptr_t)arg;
+    char next[32] = "", prev[32] = "";
     sleep(3);                                  /* не мешать началу текущего трека */
-    int fd = mpd_connect();
-    if (fd >= 0) {
-        buf_t r = {0};
-        snprintf(cmd, sizeof cmd, "playlistsearch file \"/track/%s.\"", tid);
-        long pos = !mpd_cmd(fd, cmd, &r) && r.p && strstr(r.p, "Pos: ") ? kv_long(r.p, "Pos") : -1;
-        free(r.p); r = (buf_t){0};
-        long len = pos >= 0 && !mpd_cmd(fd, "status", &r) && r.p ? kv_long(r.p, "playlistlength") : -1;
-        free(r.p);
-        if (pos + 1 < len) queue_tid(fd, pos + 1, next, sizeof next);
-        if (pos > 0) queue_tid(fd, pos - 1, prev, sizeof prev);
-        close(fd);
-    }
+    pthread_mutex_lock(&g_pl_mx);
+    int i = q_idx(id);
+    if (i >= 0 && i + 1 < g_pl.n) snprintf(next, sizeof next, "%s", g_pl.q[i + 1].t.tid);
+    if (i > 0) snprintf(prev, sizeof prev, "%s", g_pl.q[i - 1].t.tid);
+    pthread_mutex_unlock(&g_pl_mx);
     if (next[0]) pre_fill(next);
     if (prev[0]) pre_fill(prev);
-    free(tid);
     return NULL;
 }
 
-static void prefetch_next(const char *tid)
+static void prefetch_around(long id)
 {
-    char *t = strdup(tid);
     pthread_t th;
     pthread_attr_t at;
-    if (!t) return;
     pthread_attr_init(&at);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
     pthread_attr_setstacksize(&at, 256 * 1024);
-    if (pthread_create(&th, &at, prefetch_thread, t)) free(t);
+    pthread_create(&th, &at, prefetch_thread, (void *)(intptr_t)id);
     pthread_attr_destroy(&at);
 }
 
-/* сменилась текущая песня MPD (songid, file — её адрес, пусто — песни нет): отзыв об уходе
- * с прошлого трека волны, trackStarted новому, подкачка. el, playing, now — её status */
-static void wave_song(long songid, const char *file, double dur, double el, int playing, double now)
+/* зазвучала другая песня (e, NULL — нет песни): отзыв об уходе с прошлого трека волны,
+ * trackStarted новому, подкачка. el, playing, now — её место и состояние */
+static void wave_song(long songid, const qent_t *e, double dur, double el, int playing, double now)
 {
-    char tid[32] = "", aid[32] = "", id[80] = "", p[300], d[32];
+    char id[80] = "";
     char prev[80] = "", psid[160] = "", pbatch[160] = "";
     const char *ptype = NULL;                        /* NULL — об уходе не сообщать */
     double pplayed = -1, plen = 0;
     wave_t *w = calloc(1, sizeof *w);
     if (!w) return;
-    const char *t = strstr(file, "/track/"), *qm = strchr(file, '?');
-    size_t i = 0;
-    for (t = t ? t + 7 : NULL; t && isdigit((unsigned char)*t) && i + 1 < sizeof tid; ) tid[i++] = *t++;
-    tid[i] = 0;
-    int wave = tid[0] && qm && query_get(qm + 1, "w", w->sid, sizeof w->sid) && w->sid[0];
+    int wave = e && e->sid[0];
     if (wave) {
-        query_get(qm + 1, "b", w->batch, sizeof w->batch);
-        query_get(qm + 1, "s", w->seed, sizeof w->seed);
-        query_get(qm + 1, "a", aid, sizeof aid);
-        snprintf(id, sizeof id, "%s%s%s", tid, aid[0] ? ":" : "", aid);
-        if (dur <= 0) {                              /* MPD ещё не знает длину потока */
-            snprintf(p, sizeof p, "%s/%s.dur", g_cover_d, tid);
-            if (!read_small_file(p, d, sizeof d)) dur = strtod(d, NULL);
-        }
+        snprintf(w->sid, sizeof w->sid, "%s", e->sid);
+        snprintf(w->batch, sizeof w->batch, "%s", e->batch);
+        snprintf(w->seed, sizeof w->seed, "%s", e->seed);
+        snprintf(id, sizeof id, "%s%s%s", e->t.tid, e->t.aid[0] ? ":" : "", e->t.aid);
     }
 
     pthread_mutex_lock(&g_wv_mx);
@@ -1673,7 +2418,7 @@ static void wave_song(long songid, const char *file, double dur, double el, int 
             ptype = "trackFinished";
             pplayed = len > 0 ? len : pos;
             plen = len;
-        } else {                                     /* пропуск мимо нас (другой клиент MPD) */
+        } else {                                     /* очередь заменили, стоп */
             ptype = "skip";
             pplayed = pos;
         }
@@ -1689,7 +2434,7 @@ static void wave_song(long songid, const char *file, double dur, double el, int 
         snprintf(g_wv.cur_sid, sizeof g_wv.cur_sid, "%s", w->sid);
         snprintf(g_wv.cur_batch, sizeof g_wv.cur_batch, "%s", w->batch);
         g_wv.cur_dur = dur;
-        if (!id_in(g_wv.hist, g_wv.hn, tid)) {
+        if (!id_in(g_wv.hist, g_wv.hn, e->t.tid)) {
             if (g_wv.hn == WAVE_HIST) {
                 memmove(g_wv.hist, g_wv.hist + 1, (WAVE_HIST - 1) * sizeof g_wv.hist[0]);
                 g_wv.hn--;
@@ -1714,67 +2459,52 @@ static void wave_song(long songid, const char *file, double dur, double el, int 
     pthread_attr_destroy(&at);
 }
 
-/* Сторож MPD: status после каждого события плеера (смена песни, пауза, перемотка) —
- * трек волны начат, когда MPD его заиграл, а не когда заранее открыл поток */
+/* Сторож: зазвучала другая песня (не та, что плеер открыл заранее) — отзывы волны, соседей
+ * в память; иначе запоминает место и состояние для отзыва при смене */
 static void *wave_watch(void *arg)
 {
     (void)arg;
+    pthread_mutex_lock(&g_pl_mx);
     for (;;) {
-        int fd = mpd_connect();
-        if (fd < 0) { sleep(5); continue; }
-        struct timeval tv = { 70, 0 };               /* idle ждёт до 60 с, затем noidle */
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-        for (;;) {
-            buf_t st = {0}, cs = {0};
-            char state[16] = "", file[1200] = "";
-            if (mpd_cmd(fd, "status", &st) || !st.p) { free(st.p); break; }
-            double now = mono_now(), el = kv_num(st.p, "elapsed"), dur = kv_num(st.p, "duration");
-            long songid = kv_long(st.p, "songid");
-            kv_str(st.p, "state", state, sizeof state);
-            free(st.p);
-            int playing = !strcmp(state, "play");
-            pthread_mutex_lock(&g_wv_mx);
-            int changed = songid != g_wv.songid;
-            if (!changed) {
-                g_wv.pos = el;
-                g_wv.pos_t = now;
-                g_wv.playing = playing;
-            }
-            pthread_mutex_unlock(&g_wv_mx);
-            if (changed) {
-                if (songid >= 0 && !mpd_cmd(fd, "currentsong", &cs) && cs.p) kv_str(cs.p, "file", file, sizeof file);
-                free(cs.p);
-                wave_song(songid, file, dur, el, playing, now);
-                continue;                            /* пока шли отзывы, могло смениться ещё */
-            }
-            if (send_all(fd, "idle player\n", 12)) break;
-            struct pollfd pf = { .fd = fd, .events = POLLIN };
-            if (poll(&pf, 1, 60000) == 0 && send_all(fd, "noidle\n", 7)) break;
-            if (mpd_read(fd, "idle player", NULL)) break;
+        long id = g_pl.aud;
+        int i = q_idx(id), playing = g_pl.state == PS_PLAY;
+        double now = mono_now(), el = pl_el();
+        pthread_mutex_lock(&g_wv_mx);
+        int changed = id != g_wv.songid;
+        if (!changed) {
+            g_wv.pos = el;
+            g_wv.pos_t = now;
+            g_wv.playing = playing;
         }
-        close(fd);
-        sleep(1);
+        pthread_mutex_unlock(&g_wv_mx);
+        if (!changed) {
+            cond_wait_ms(&g_ev_cv, &g_pl_mx, 5000);
+            continue;
+        }
+        static qent_t e;                             /* только этот поток */
+        if (i >= 0) e = g_pl.q[i];
+        double dur = g_pl.dur > 0 ? g_pl.dur : i >= 0 ? e.t.dur : 0;
+        pthread_mutex_unlock(&g_pl_mx);
+        wave_song(id, i >= 0 ? &e : NULL, dur, el, playing, now);
+        if (i >= 0) prefetch_around(id);
+        pthread_mutex_lock(&g_pl_mx);                /* пока шли отзывы, могло смениться ещё */
     }
     return NULL;
 }
 
-/* текущая песня MPD — трек волны, о котором знает сторож */
+/* что звучит — трек волны, о котором знает сторож */
 typedef struct { char id[80], sid[160], batch[160]; double played; long song; } wcur_t;
 
-static int wave_cur(int fd, wcur_t *c)
+static int wave_cur(wcur_t *c)
 {
-    buf_t st = {0};
-    long songid = -1;
     memset(c, 0, sizeof *c);
-    c->song = -1;
-    if (!mpd_cmd(fd, "status", &st) && st.p) {
-        c->song = kv_long(st.p, "song");
-        songid = kv_long(st.p, "songid");
-        c->played = kv_num(st.p, "elapsed");
-    }
-    free(st.p);
+    pthread_mutex_lock(&g_pl_mx);
+    long songid = g_pl.aud;
+    c->song = q_idx(songid);
+    c->played = pl_el();
+    pthread_mutex_unlock(&g_pl_mx);
     pthread_mutex_lock(&g_wv_mx);
-    int ok = songid >= 0 && songid == g_wv.songid && g_wv.cur[0];
+    int ok = c->song >= 0 && songid == g_wv.songid && g_wv.cur[0];
     if (ok) {
         snprintf(c->id, sizeof c->id, "%s", g_wv.cur);
         snprintf(c->sid, sizeof c->sid, "%s", g_wv.cur_sid);
@@ -1801,9 +2531,7 @@ static void wave_mark(const wcur_t *c, int kind)
 static void wave_leave(void)
 {
     wcur_t c;
-    int fd = mpd_connect(), wv = fd >= 0 && wave_cur(fd, &c);
-    if (fd >= 0) close(fd);
-    if (wv) rotor_feedback(c.sid, c.batch, "skip", c.id, c.played, 0);
+    if (wave_cur(&c)) rotor_feedback(c.sid, c.batch, "skip", c.id, c.played, 0);
     pthread_mutex_lock(&g_wv_mx);                    /* songid и место — сторожу, как были */
     g_wv.hn = 0;
     g_wv.cur[0] = 0;
@@ -2136,42 +2864,30 @@ static void h_playlist(req_t *r)
 
 static void h_now(req_t *r)
 {
-    int fd = mpd_connect();
     cJSON *o;
-    if (fd < 0) {
+    char svc[32], v[64];
+    if (!player_active()) {
         o = cJSON_CreateObject();
         cJSON_AddStringToObject(o, "state", "off");
         send_obj(r, o);
         return;
     }
-    buf_t st = {0}, cs = {0};
-    char v[256], file[2048], svc[32], p[512];
-    mpd_cmd(fd, "status", &st);
-    mpd_cmd(fd, "currentsong", &cs);
-    close(fd);
-    o = song_json(cs.p ? cs.p : "");
-    kv_str(cs.p, "file", file, sizeof file);
-    kv_str(st.p, "state", v, sizeof v);
-    cJSON_AddStringToObject(o, "state", v[0] ? v : "stop");
+    pthread_mutex_lock(&g_pl_mx);
+    int i = q_idx(g_pl.aud), st = g_pl.state;
+    o = ent_json(i >= 0 ? &g_pl.q[i] : NULL, i);
+    cJSON_AddStringToObject(o, "state", st == PS_PLAY ? "play" : st == PS_PAUSE ? "pause" : "stop");
+    cJSON_AddBoolToObject(o, "wave", i >= 0 && g_pl.q[i].sid[0]);
+    cJSON_AddNumberToObject(o, "pos", pl_el());
+    if (g_pl.dur > 0) cJSON_ReplaceItemInObject(o, "dur", cJSON_CreateNumber(g_pl.dur));
+    cJSON_AddNumberToObject(o, "n", g_pl.n);
+    v[0] = 0;
+    if (st != PS_STOP && g_pl.rate) snprintf(v, sizeof v, "%u:%u:%u", g_pl.rate, g_pl.bits, g_pl.ch);
+    cJSON_AddStringToObject(o, "audio", v);
+    cJSON_AddNumberToObject(o, "kbps", st != PS_STOP ? g_pl.kbps : 0);
+    cJSON_AddStringToObject(o, "codec", g_pl.codec);
+    pthread_mutex_unlock(&g_pl_mx);
     active_service(svc, sizeof svc);
     cJSON_AddStringToObject(o, "svc", svc);
-    cJSON_AddBoolToObject(o, "wave", strstr(file, "&w=") != NULL);
-    cJSON_AddNumberToObject(o, "pos", kv_num(st.p, "elapsed"));
-    if (kv_num(st.p, "duration") > 0) cJSON_ReplaceItemInObject(o, "dur", cJSON_CreateNumber(kv_num(st.p, "duration")));
-    cJSON_AddNumberToObject(o, "n", kv_long(st.p, "playlistlength") > 0 ? kv_long(st.p, "playlistlength") : 0);
-    cJSON_ReplaceItemInObject(o, "song", cJSON_CreateNumber(kv_long(st.p, "song") > 0 ? kv_long(st.p, "song") : 0));
-    kv_str(st.p, "audio", v, sizeof v);
-    cJSON_AddStringToObject(o, "audio", v);
-    cJSON_AddNumberToObject(o, "kbps", kv_long(st.p, "bitrate") > 0 ? kv_long(st.p, "bitrate") : 0);
-    const char *tid = cJSON_GetStringValue(cJSON_GetObjectItem(o, "id"));
-    v[0] = 0;
-    if (tid && tid[0]) {
-        snprintf(p, sizeof p, "%s/%s.codec", g_cover_d, tid);
-        read_small_file(p, v, sizeof v);
-        for (char *c = v; *c; c++) *c = (char)toupper((unsigned char)*c);
-    }
-    cJSON_AddStringToObject(o, "codec", v);
-    free(st.p); free(cs.p);
     send_obj(r, o);
 }
 
@@ -2183,9 +2899,8 @@ static void h_queue_get(req_t *r)
     nb = nb < 0 ? 0 : nb > 100 ? 100 : nb;
     na = na < 0 ? 0 : na > 100 ? 100 : na;
     cJSON *o = cJSON_CreateObject();
-    cJSON *prev = cJSON_AddArrayToObject(o, "prev"), *next = cJSON_AddArrayToObject(o, "next"), *cur = NULL;
-    int fd = mpd_connect();
-    if (fd < 0) {
+    cJSON *prev = cJSON_AddArrayToObject(o, "prev"), *next = cJSON_AddArrayToObject(o, "next");
+    if (!player_active()) {
         cJSON_AddStringToObject(o, "state", "off");
         cJSON_AddNumberToObject(o, "song", -1);
         cJSON_AddNumberToObject(o, "n", 0);
@@ -2193,37 +2908,19 @@ static void h_queue_get(req_t *r)
         send_obj(r, o);
         return;
     }
-    buf_t st = {0}, pl = {0};
-    mpd_cmd(fd, "status", &st);
-    long n = kv_long(st.p, "playlistlength"), song = kv_long(st.p, "song");
-    if (n < 0) n = 0;
-    long from = song - nb > 0 ? song - nb : 0, to = song + 1 + na < n ? song + 1 + na : n;
-    if (to > from) {                                   /* без текущей (song = -1) — начало очереди */
-        char c[64];
-        snprintf(c, sizeof c, "playlistinfo %ld:%ld", from, to);
-        mpd_cmd(fd, c, &pl);
+    pthread_mutex_lock(&g_pl_mx);
+    int n = g_pl.n, song = q_idx(g_pl.aud), st = g_pl.state;
+    int from = song - nb > 0 ? song - nb : 0, to = song + 1 + na < n ? song + 1 + na : n;
+    cJSON_AddStringToObject(o, "state", st == PS_PLAY ? "play" : st == PS_PAUSE ? "pause" : "stop");
+    cJSON_AddNumberToObject(o, "song", song);
+    cJSON_AddNumberToObject(o, "n", n);
+    for (int i = from; i < to; i++) {                /* без текущей (song = -1) — начало очереди */
+        if (i == song) continue;
+        cJSON_AddItemToArray(i < song ? prev : next, ent_json(&g_pl.q[i], i));
     }
-    close(fd);
-    kv_str(st.p, "state", v, sizeof v);
-    cJSON_AddStringToObject(o, "state", v[0] ? v : "stop");
-    cJSON_AddNumberToObject(o, "song", (double)song);
-    cJSON_AddNumberToObject(o, "n", (double)n);
-    /* playlistinfo: каждая песня начинается со строки file: */
-    for (char *p = pl.p; p && *p; ) {
-        char *e = strstr(p + 1, "\nfile: ");
-        if (e) *e = 0;
-        if (!strncmp(p, "file: ", 6)) {
-            cJSON *s = song_json(p);
-            long pos = (long)cJSON_GetNumberValue(cJSON_GetObjectItem(s, "song"));
-            if (pos < song) cJSON_AddItemToArray(prev, s);
-            else if (pos == song && !cur) cur = s;
-            else cJSON_AddItemToArray(next, s);
-        }
-        p = e ? e + 1 : NULL;
-    }
-    if (cur) cJSON_AddItemToObject(o, "current", cur);
+    if (song >= 0) cJSON_AddItemToObject(o, "current", ent_json(&g_pl.q[song], song));
     else cJSON_AddNullToObject(o, "current");
-    free(st.p); free(pl.p);
+    pthread_mutex_unlock(&g_pl_mx);
     send_obj(r, o);
 }
 
@@ -2260,9 +2957,9 @@ static void h_queue_post(req_t *r)
     int s = 0;
     for (int i = 0; i < ql.n; i++) if (!strcmp(ql.v[i].tid, want)) { s = i; break; }
     if (!append) wave_leave();
-    int k = queue_play(ql.v, ql.n, s, append, NULL, err, sizeof err);
+    int k = queue_play(ql.v, ql.n, s, append, NULL, NULL, NULL, err, sizeof err);
     free(ql.v);
-    if (k < 0) { send_fail(r->fd, strstr(err, "MPD") ? 503 : 400, err); return; }
+    if (k < 0) { send_fail(r->fd, k == -2 ? 503 : 400, err); return; }
     cJSON *o = cJSON_CreateObject();
     cJSON_AddNumberToObject(o, "added", k);
     send_obj(r, o);
@@ -2299,11 +2996,9 @@ static void h_wave(req_t *r)
     }
     wave_leave();
     rotor_feedback(sid, NULL, "radioStarted", NULL, -1, 0);   /* как приложение: без batchId */
-    char wq[800];
-    wave_query(wq, sizeof wq, sid, batch, seed);
-    int k = queue_play(ql.v, ql.n, 0, 0, wq, err, sizeof err);
+    int k = queue_play(ql.v, ql.n, 0, 0, sid, batch, seed, err, sizeof err);
     free(ql.v);
-    if (k < 0) { send_fail(r->fd, strstr(err, "MPD") ? 503 : 400, err); return; }
+    if (k < 0) { send_fail(r->fd, k == -2 ? 503 : 400, err); return; }
     cJSON *o = cJSON_CreateObject();
     cJSON_AddNumberToObject(o, "added", k);
     send_obj(r, o);
@@ -2328,17 +3023,17 @@ static void h_like(req_t *r)
     free(b.p);
     cJSON_Delete(root);
     if (!res) { send_fail(r->fd, 502, err); return; }
-    int fd = mpd_connect();
-    if (fd >= 0) {
-        /* играющий трек волны — отзыв и в её сессию, как в приложении */
-        wcur_t wc;
-        int wv = wave_cur(fd, &wc), cur = wv && id_in(&wc.id, 1, id);
-        if (cur) rotor_feedback(wc.sid, wc.batch, like ? "like" : "dislike", wc.id, like ? -1 : wc.played, 0);
-        if (!like) {
-            if (wv) wave_mark(&wc, cur ? WV_DISLIKE : WV_FWD);
-            mpd_cmd(fd, "next", NULL);
-        }
-        close(fd);
+    /* играющий трек волны — отзыв и в её сессию, как в приложении */
+    wcur_t wc;
+    int wv = wave_cur(&wc), cur = wv && id_in(&wc.id, 1, id);
+    if (cur) rotor_feedback(wc.sid, wc.batch, like ? "like" : "dislike", wc.id, like ? -1 : wc.played, 0);
+    if (!like && player_active()) {
+        if (wv) wave_mark(&wc, cur ? WV_DISLIKE : WV_FWD);
+        pthread_mutex_lock(&g_pl_mx);
+        int i = q_idx(g_pl.aud);
+        if (i >= 0 && i + 1 < g_pl.n) pl_go(i + 1, 0, PS_PLAY);
+        else if (i >= 0) pl_stop();
+        pthread_mutex_unlock(&g_pl_mx);
     }
     send_ok(r->fd, NULL);
 }
@@ -2357,59 +3052,89 @@ static int secs_ok(const char *s, int sign)
 static void h_ctl(req_t *r)
 {
     const char *c = r->path + 1;
-    char cmd[48], v[16];
+    char v[16], m[120] = "";
     long to = -1;                                    /* play pos */
-    int fd = mpd_connect();
-    if (fd < 0) { send_fail(r->fd, 503, "MPD не отвечает"); return; }
-    if (!strcmp(c, "toggle")) {
-        buf_t st = {0};
-        mpd_cmd(fd, "status", &st);
-        kv_str(st.p, "state", v, sizeof v);
-        free(st.p);
-        snprintf(cmd, sizeof cmd, "%s", strcmp(v, "play") ? "play" : "pause 1");
-    } else if (!strcmp(c, "play")) {
-        if (prm(r, "pos", v, sizeof v) && all_digits(v)) {
-            snprintf(cmd, sizeof cmd, "play %s", v);
-            to = strtol(v, NULL, 10);
-        } else {
-            snprintf(cmd, sizeof cmd, "play");
-        }
-    } else if (!strcmp(c, "seek")) {
+    double t = 0;
+    int rel = 0;
+    if (!player_active()) { send_fail(r->fd, 503, "Яндекс Музыка не выбрана плеером"); return; }
+    if (!strcmp(c, "seek")) {
         /* t — с начала трека, d — от текущего места (+ в адресе — %2B, но и без знака вперёд) */
-        if (prm(r, "t", v, sizeof v) && secs_ok(v, 0)) {
-            snprintf(cmd, sizeof cmd, "seekcur %s", v);
-        } else if (prm(r, "d", v, sizeof v) && secs_ok(v, 1)) {
-            snprintf(cmd, sizeof cmd, "seekcur %s%s", (*v == '-' || *v == '+') ? "" : "+", v);
-        } else {
-            close(fd);
-            send_fail(r->fd, 400, "нужно t=<секунды> или d=<±секунды>");
-            return;
-        }
-    } else {
-        snprintf(cmd, sizeof cmd, "%s", !strcmp(c, "prev") ? "previous" : !strcmp(c, "pause") ? "pause 1" : c);
+        if (prm(r, "t", v, sizeof v) && secs_ok(v, 0)) t = strtod(v, NULL);
+        else if (prm(r, "d", v, sizeof v) && secs_ok(v, 1)) { t = strtod(v, NULL); rel = 1; }
+        else { send_fail(r->fd, 400, "нужно t=<секунды> или d=<±секунды>"); return; }
+    } else if (!strcmp(c, "play") && prm(r, "pos", v, sizeof v) && all_digits(v)) {
+        to = strtol(v, NULL, 10);
     }
     /* уход с трека волны: сторож пошлёт skip, а не trackFinished */
     int kind = !strcmp(c, "next") ? WV_FWD : !strcmp(c, "prev") ? WV_BACK : WV_NONE;
     wcur_t wc;
-    if ((kind != WV_NONE || to >= 0) && wave_cur(fd, &wc)) {
+    if ((kind != WV_NONE || to >= 0) && wave_cur(&wc)) {
         if (to >= 0) kind = to > wc.song ? WV_FWD : to < wc.song ? WV_BACK : WV_NONE;
         wave_mark(&wc, kind);
     }
-    buf_t res = {0};
-    int rc = mpd_cmd(fd, cmd, &res);
-    close(fd);
-    if (rc) {
-        char m[300];
-        char *nl = res.p ? strrchr(res.p, '\n') : NULL;
-        if (nl) *nl = 0;
-        char *last = res.p ? strrchr(res.p, '\n') : NULL;
-        snprintf(m, sizeof m, "MPD: %s", last ? last + 1 : res.p ? res.p : "нет ответа");
-        free(res.p);
-        send_fail(r->fd, 400, m);
-        return;
+    pthread_mutex_lock(&g_pl_mx);
+    int i = q_idx(g_pl.aud), st = g_pl.state;
+    if (!strcmp(c, "next")) {
+        if (i >= 0 && i + 1 < g_pl.n) pl_go(i + 1, 0, PS_PLAY);
+        else pl_stop();
+    } else if (!strcmp(c, "prev")) {
+        if (g_pl.n) pl_go(i > 0 ? i - 1 : 0, 0, PS_PLAY);
+    } else if (!strcmp(c, "play") && to >= 0) {
+        if (to < g_pl.n) pl_go((int)to, 0, PS_PLAY);
+        else snprintf(m, sizeof m, "нет песни %ld в очереди", to);
+    } else if (!strcmp(c, "play") || (!strcmp(c, "toggle") && st != PS_PLAY)) {
+        if (st == PS_PAUSE) {
+            g_pl.state = PS_PLAY;
+            pthread_cond_broadcast(&g_pl_cv);
+            pthread_cond_broadcast(&g_ev_cv);
+        } else if (st == PS_STOP) {
+            if (g_pl.n) pl_go(i >= 0 ? i : 0, 0, PS_PLAY);
+            else snprintf(m, sizeof m, "очередь пуста");
+        }
+    } else if (!strcmp(c, "pause") || !strcmp(c, "toggle")) {
+        if (st == PS_PLAY) {
+            g_pl.state = PS_PAUSE;
+            pthread_cond_broadcast(&g_pl_cv);
+            pthread_cond_broadcast(&g_ev_cv);
+        }
+    } else if (!strcmp(c, "stop")) {
+        pl_stop();
+    } else if (st == PS_STOP || i < 0) {             /* seek */
+        snprintf(m, sizeof m, "ничего не играет");
+    } else {
+        if (rel) t += pl_el();
+        if (t < 0) t = 0;
+        if (g_pl.dur > 0 && t > g_pl.dur - 1) t = g_pl.dur > 1 ? g_pl.dur - 1 : 0;
+        if (g_pl.cur == g_pl.aud) {                  /* плеер в этом треке: перемотать на месте */
+            g_pl.seek = t;
+            g_pl.s0 = t;
+            g_pl.w0 = W_NONE;
+            pthread_cond_broadcast(&g_pl_cv);
+            pthread_cond_broadcast(&g_ev_cv);
+        } else {
+            pl_go(i, t, st);
+        }
     }
-    free(res.p);
-    send_ok(r->fd, NULL);
+    pthread_mutex_unlock(&g_pl_mx);
+    if (m[0]) send_fail(r->fd, 400, m);
+    else send_ok(r->fd, NULL);
+}
+
+static int is_loopback(int fd);
+
+/* POST, только с платы: /etc/rc.pure/S95ymusic убрал g_active_f (Фокс включает другой плеер) —
+ * остановиться и закрыть ALSA; ответ, когда устройство свободно */
+static void h_output(req_t *r)
+{
+    if (!is_loopback(r->fd)) { send_fail(r->fd, 403, "только с платы"); return; }
+    if (player_active()) { send_ok(r->fd, "on"); return; }
+    pthread_mutex_lock(&g_pl_mx);
+    if (g_pl.state != PS_STOP) pl_stop();
+    for (int i = 0; i < 50 && !g_pl.idle; i++) cond_wait_ms(&g_pl_cv, &g_pl_mx, 100);
+    int idle = g_pl.idle;
+    pthread_mutex_unlock(&g_pl_mx);
+    if (idle) send_ok(r->fd, "off");
+    else send_fail(r->fd, 503, "ALSA ещё занят");
 }
 
 static void h_index(req_t *r);
@@ -2438,6 +3163,7 @@ static const struct { const char *path; void (*fn)(req_t *); const char *help; }
     { "/pause",    h_ctl,      "" },
     { "/stop",     h_ctl,      "" },
     { "/seek",     h_ctl,      "?t=<сек> — с начала трека | ?d=<±сек> — от текущего места" },
+    { "/output",   h_output,   "POST, только с платы: Фокс включил другой плеер — освободить ALSA" },
 };
 
 static void h_index(req_t *r)
@@ -2496,26 +3222,15 @@ static void *client_thread(void *arg)
 
     char method[8] = "", target[8192] = "";
     if (sscanf(req, "%7s %8191s", method, target) != 2) goto out;
-    char range[128] = "";
     long clen = 0;
     for (char *l = strstr(req, "\r\n"); l; l = strstr(l + 2, "\r\n")) {
         char *h = l + 2;
-        if (!strncasecmp(h, "Range:", 6)) sscanf(h + 6, " %127[^\r\n]", range);
-        else if (!strncasecmp(h, "Content-Length:", 15)) clen = strtol(h + 15, NULL, 10);
+        if (!strncasecmp(h, "Content-Length:", 15)) clen = strtol(h + 15, NULL, 10);
     }
     char *query = strchr(target, '?');
     if (query) *query++ = 0;
-    logm(1, "%s %s%s%s %s", method, target, query ? "?" : "", query ? query : "", range);
+    logm(1, "%s %s%s%s", method, target, query ? "?" : "", query ? query : "");
 
-    if (!strncmp(target, "/track/", 7)) {
-        /* потоки — только для MPD на этой же плате: в них подписка владельца токена */
-        if (!is_loopback(fd)) { reply_json_err(fd, 403, "только для MPD"); goto out; }
-        if (strcmp(method, "GET") && strcmp(method, "HEAD")) { reply_json_err(fd, 400, "method"); goto out; }
-        struct timeval tv2 = { 0, 0 };                    /* поток может идти долго */
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv2, sizeof tv2);
-        serve_track(fd, method, target, range[0] ? range : NULL);
-        goto out;
-    }
     if (!strcmp(method, "POST") && clen > 0) {
         if (clen > 1024 * 1024) { send_fail(fd, 400, "слишком большое тело"); goto out; }
         body = malloc((size_t)clen + 1);
@@ -2542,13 +3257,13 @@ out:
 static void usage(void)
 {
     fprintf(stderr,
-        "ymusicd " YM_VERSION " — Яндекс Музыка для MPD, API для приложения на ПК\n"
+        "ymusicd " YM_VERSION " — Яндекс Музыка: плеер и API для приложения на ПК\n"
         "  -l адрес     слушать (0.0.0.0)\n"
         "  -p порт      (6601)\n"
         "  -t файл      токен OAuth (/var/lib/ymusic/token)\n"
         "  -q файл      качество lossless|hq|nq (/var/lib/ymusic/quality)\n"
-        "  -m хост:порт MPD (127.0.0.1:6600)\n"
-        "  -c папка     обложки и длительности треков очереди (/tmp/ymusic)\n"
+        "  -d устройство ALSA (default)\n"
+        "  -c папка     служебные файлы: active — Яндекс Музыка выбрана плеером (/tmp/ymusic)\n"
         "  -a URL       адрес API (https://api.music.yandex.net)\n"
         "  -T raw|encraw транспорт (encraw)\n"
         "  -v           подробный журнал\n");
@@ -2557,20 +3272,13 @@ static void usage(void)
 int main(int argc, char **argv)
 {
     int o;
-    static char mpdhost[64];
-    while ((o = getopt(argc, argv, "l:p:t:q:m:c:a:T:vh")) != -1) {
+    while ((o = getopt(argc, argv, "l:p:t:q:d:c:a:T:vh")) != -1) {
         switch (o) {
         case 'l': g_listen = optarg; break;
         case 'p': g_port = atoi(optarg); break;
         case 't': g_token_f = optarg; break;
         case 'q': g_qual_f = optarg; break;
-        case 'm': {
-            snprintf(mpdhost, sizeof mpdhost, "%s", optarg);
-            char *c = strrchr(mpdhost, ':');
-            if (c) { *c = 0; g_mpd_port = atoi(c + 1); }
-            g_mpd = mpdhost;
-            break;
-        }
+        case 'd': g_dev = optarg; break;
         case 'c': g_cover_d = optarg; break;
         case 'a': g_api = optarg; break;
         case 'T': g_transport = optarg; break;
@@ -2582,6 +3290,9 @@ int main(int argc, char **argv)
     setvbuf(stderr, NULL, _IOLBF, 0);
     curl_global_init(CURL_GLOBAL_DEFAULT);
     share_init();
+    snprintf(g_active_f, sizeof g_active_f, "%s/active", g_cover_d);
+    cond_init(&g_pl_cv);
+    cond_init(&g_ev_cv);
 
     int ls = socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;
@@ -2599,8 +3310,10 @@ int main(int argc, char **argv)
     pthread_attr_init(&at);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
     pthread_attr_setstacksize(&at, 512 * 1024);
-    pthread_t wth;
-    if (pthread_create(&wth, &at, wave_watch, NULL)) logm(0, "сторож MPD не запущен");
+    pthread_t th;
+    g_src_idle = src_idle;
+    if (pthread_create(&th, &at, player_thread, NULL)) { logm(0, "плеер не запущен"); return 1; }
+    if (pthread_create(&th, &at, wave_watch, NULL)) logm(0, "сторож волны не запущен");
     for (;;) {
         int fd = accept(ls, NULL, NULL);
         if (fd < 0) { if (errno == EINTR) continue; usleep(100000); continue; }

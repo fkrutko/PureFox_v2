@@ -45,6 +45,7 @@ $services = [
     'apscream'    => 'apscream',
     'aprenderer'  => 'ap2renderer',
     'mpd'         => 'mpd',
+    'ymusic'      => 'ymusicd',
 ];
 
 $status = [
@@ -76,6 +77,12 @@ if ($boot_id !== '') {
 // Determine active service
 $all_processes = implode('|', array_values($services));
 $output = shell_exec("ps -eo comm | grep -E '^($all_processes)$' | head -1");
+
+// ymusicd runs all the time: it is the player only with its flag file
+if (!file_exists('/tmp/ymusic/active')) {
+    $all_processes = implode('|', array_diff(array_values($services), ['ymusicd']));
+    $output = shell_exec("ps -eo comm | grep -E '^($all_processes)$' | head -1");
+}
 
 if (!empty($output)) {
     $found_process = trim($output);

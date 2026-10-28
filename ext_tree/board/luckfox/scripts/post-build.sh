@@ -68,8 +68,9 @@ mv "$BOOT_IMAGE_TMP" "$BINARIES_DIR/boot.img"
 rm "$BINARIES_DIR/zImage"
 
 rm -f $TARGET_DIR/etc/init.d/*urandom
-# MPD is a player: started from /etc/rc.pure/S95mpd through S95player only
+# MPD and upmpdcli are a player: started from /etc/rc.pure/S95mpd through S95player only
 rm -f $TARGET_DIR/etc/init.d/*mpd
+rm -f $TARGET_DIR/etc/init.d/*upmpdcli
 rm -f $TARGET_DIR/etc/init.d/S40network
 #rm -f $TARGET_DIR/etc/init.d/*mdev
 rm -f -r $TARGET_DIR/etc/alsa

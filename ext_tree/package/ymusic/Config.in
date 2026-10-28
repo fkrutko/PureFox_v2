@@ -4,8 +4,12 @@ config BR2_PACKAGE_YMUSIC
 	select BR2_PACKAGE_LIBCURL
 	select BR2_PACKAGE_OPENSSL
 	select BR2_PACKAGE_CA_CERTIFICATES
+	select BR2_PACKAGE_ALSA_LIB
+	select BR2_PACKAGE_FLAC
+	select BR2_PACKAGE_LIBMAD
 	help
-	  Yandex Music for MPD (ported from DigiFox). ymusicd on port 6601
-	  serves a JSON API for a desktop app (login, browse, search, queue,
-	  My Wave, playback control) and decrypted track streams (encraw,
-	  AES-128-CTR) to MPD, refilling "My Wave" in the MPD queue.
+	  Yandex Music (ported from DigiFox). ymusicd on port 6601 serves a
+	  JSON API for a desktop app (login, browse, search, queue, My Wave,
+	  playback control) and plays the queue itself: decrypts the track
+	  files (encraw, AES-128-CTR), decodes FLAC (libFLAC) and MP3
+	  (libmad) and writes them to ALSA unchanged.
