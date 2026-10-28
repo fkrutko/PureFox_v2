@@ -1405,6 +1405,8 @@ static cJSON *song_json(const char *blk)
  * до текущего включительно (последние WAVE_HIST). Очередь при пропуске не трогаем — как
  * приложение в режиме wave queue: пропуск влияет на следующие партии через отзыв. */
 #define WAVE_HIST       100
+#define WAVE_KEEP       100                                   /* сыгранного в очереди после чистки */
+#define WAVE_KEEP_MAX   300                                   /* чистка, когда сыграно больше */
 
 enum { WV_NONE, WV_FWD, WV_BACK, WV_DISLIKE };       /* как ушли с трека через наш API */
 
@@ -1556,10 +1558,11 @@ static void *wave_thread(void *arg)
                 ql.v[m++] = ql.v[i];
     if (m) logm(1, "волна: +%d в очередь (прислано %d)", mpd_add_tracks(fd, ql.v, m, wq), ql.n);
     free(ql.v);
-    /* очередь не растёт бесконечно: сыгранное старше 20 треков убрать */
-    if (song > 40) {
+    /* очередь не растёт бесконечно, но и не сдвигается под приложением: сыгранное
+     * убираем редко (за WAVE_KEEP_MAX — примерно сутки подряд), оставляя WAVE_KEEP */
+    if (song > WAVE_KEEP_MAX) {
         char cmd[64];
-        snprintf(cmd, sizeof cmd, "delete 0:%ld", song - 20);
+        snprintf(cmd, sizeof cmd, "delete 0:%ld", song - WAVE_KEEP);
         mpd_cmd(fd, cmd, NULL);
     }
 close_mpd:
