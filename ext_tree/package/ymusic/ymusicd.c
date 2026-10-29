@@ -337,7 +337,8 @@ static int api_call(const char *method, const char *path_q, const char *client,
     curl_slist_free_all(hs);
     curl_easy_cleanup(c);
     if (rc != CURLE_OK) {
-        logm(0, "API %s %s: %s", method, path_q, curl_easy_strerror(rc));
+        /* libcurl собран без текстов ошибок — без номера не понять, что случилось */
+        logm(0, "API %s %s: %s (curl %d)", method, path_q, curl_easy_strerror(rc), (int)rc);
         return -1;
     }
     logm(1, "API %s %s -> %ld (%zu B, %.3f с%s)", method, path_q, *status, out->n, tt, nc ? ", новое соединение" : "");
@@ -350,8 +351,10 @@ static cJSON *api_json(const char *method, const char *path_q, const char *clien
     long st = 0;
     cJSON *j = NULL;
     if (api_call(method, path_q, client, jbody ? "application/json" : NULL,
-                 jbody, jbody ? strlen(jbody) : 0, &b, &st) == 0 && b.p)
-        j = cJSON_Parse(b.p);
+                 jbody, jbody ? strlen(jbody) : 0, &b, &st) == 0) {
+        if (b.p) j = cJSON_Parse(b.p);
+        if (!j) logm(0, "API %s %s -> HTTP %ld, не JSON (%zu Б): %.120s", method, path_q, st, b.n, b.p ? b.p : "");
+    }
     if (j && st >= 400) logm(0, "API %s %s -> HTTP %ld", method, path_q, st);
     free(b.p);
     return j;
@@ -372,12 +375,30 @@ static int b64(const unsigned char *in, int n, char *out, size_t sz)
     return EVP_EncodeBlock((unsigned char *)out, in, n);
 }
 
-static void cache_drop(const char *tid)
+/* ссылка больше не свежая, но остаётся запасной: у ссылок CDN свой срок (дни), и если
+ * API не ответит, лучше попробовать прежнюю, чем бросить трек */
+static void cache_expire(const char *tid)
 {
     pthread_mutex_lock(&g_lock);
     for (size_t i = 0; i < sizeof g_cache / sizeof g_cache[0]; i++)
-        if (!strcmp(g_cache[i].tid, tid)) g_cache[i].tid[0] = 0;
+        if (!strcmp(g_cache[i].tid, tid)) g_cache[i].t = 0;
     pthread_mutex_unlock(&g_lock);
+}
+
+/* ссылка из кэша не старше max_age с (max_age < 0 — любая): 1 — есть */
+static int cache_get(const char *tid, const char *q, long max_age, finfo_t *fi)
+{
+    time_t now = time(NULL);
+    int r = 0;
+    pthread_mutex_lock(&g_lock);
+    for (size_t i = 0; i < sizeof g_cache / sizeof g_cache[0] && !r; i++)
+        if (!strcmp(g_cache[i].tid, tid) && !strcmp(g_cache[i].quality, q) &&
+            (max_age < 0 || now - g_cache[i].t < max_age)) {
+            *fi = g_cache[i];
+            r = 1;
+        }
+    pthread_mutex_unlock(&g_lock);
+    return r;
 }
 
 static int file_info(const char *tid, finfo_t *fi, char *err, size_t esz)
@@ -386,15 +407,7 @@ static int file_info(const char *tid, finfo_t *fi, char *err, size_t esz)
     const char *q = get_quality(qbuf, sizeof qbuf);
     time_t now = time(NULL);
 
-    pthread_mutex_lock(&g_lock);
-    for (size_t i = 0; i < sizeof g_cache / sizeof g_cache[0]; i++)
-        if (!strcmp(g_cache[i].tid, tid) && !strcmp(g_cache[i].quality, q) &&
-            now - g_cache[i].t < INFO_TTL) {
-            *fi = g_cache[i];
-            pthread_mutex_unlock(&g_lock);
-            return 0;
-        }
-    pthread_mutex_unlock(&g_lock);
+    if (cache_get(tid, q, INFO_TTL, fi)) return 0;
 
     /* MP4-контейнер (flac-mp4, aac-mp4) плееру не по зубам, поэтому только flac и mp3 */
     const char *codecs = !strcmp(q, "lossless") ? "flac,mp3" : "mp3";
@@ -422,7 +435,7 @@ static int file_info(const char *tid, finfo_t *fi, char *err, size_t esz)
     free(esig);
 
     cJSON *r = api_json("GET", path, DESKTOP_CLIENT, NULL);
-    if (!r) { snprintf(err, esz, "нет ответа от API"); return -1; }
+    if (!r) { snprintf(err, esz, "нет ответа от API"); goto stale; }
     cJSON *di = cJSON_GetObjectItem(cJSON_GetObjectItem(r, "result"), "downloadInfo");
     const char *url = cJSON_GetStringValue(cJSON_GetObjectItem(di, "url"));
     if (!url) {
@@ -434,7 +447,7 @@ static int file_info(const char *tid, finfo_t *fi, char *err, size_t esz)
         const char *n = cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(r, "error"), "name"));
         snprintf(err, esz, "get-file-info: %s", m ? m : n ? n : "нет ссылки (подписка? токен?)");
         cJSON_Delete(r);
-        return -1;
+        goto stale;
     }
     memset(fi, 0, sizeof *fi);
     snprintf(fi->tid, sizeof fi->tid, "%s", tid);
@@ -456,6 +469,11 @@ static int file_info(const char *tid, finfo_t *fi, char *err, size_t esz)
     }
     g_cache[oldest] = *fi;
     pthread_mutex_unlock(&g_lock);
+    return 0;
+
+stale:
+    if (!cache_get(tid, q, -1, fi)) return -1;
+    logm(0, "трек %s: %s — пробую прежнюю ссылку", tid, err);
     return 0;
 }
 
@@ -809,7 +827,7 @@ static int src_fetch(src_t *src, const finfo_t *fi, long long from)
     curl_easy_cleanup(c);
     if (rc == CURLE_OK) return 0;
     if (src->restart || src->closing) return 1;
-    logm(0, "трек %s: CDN %s (HTTP %ld, с %lld)", src->tid, curl_easy_strerror(rc), code, from);
+    logm(0, "трек %s: CDN %s (curl %d, HTTP %ld, с %lld)", src->tid, curl_easy_strerror(rc), (int)rc, code, from);
     return -1;
 }
 
@@ -833,7 +851,7 @@ static void *src_thread(void *arg)
         pthread_mutex_unlock(&src->mx);
 
         int r = -1;
-        if (fails) { cache_drop(src->tid); have_fi = 0; }   /* ссылка могла протухнуть — новая */
+        if (fails) { cache_expire(src->tid); have_fi = 0; } /* ссылка могла протухнуть — новая */
         if (!have_fi && file_info(src->tid, &fi, err, sizeof err)) {
             logm(0, "трек %s: %s", src->tid, err);
         } else {
@@ -849,14 +867,19 @@ static void *src_thread(void *arg)
             src->done = 1;
         } else {
             if (src->hi > from) fails = 0;
-            if (++fails > 4) {
+            if (++fails > 5) {                       /* ~15 с: начало из памяти ещё играет */
                 logm(0, "трек %s: CDN не отдаёт файл", src->tid);
                 src->failed = 1;
             } else {
                 logm(0, "трек %s: докачка с %lld", src->tid, src->hi);
-                pthread_mutex_unlock(&src->mx);
-                usleep(300000 * fails);
-                pthread_mutex_lock(&src->mx);
+                struct timespec t0, t;               /* пауза, но закрытие и перемотка — сразу */
+                clock_gettime(CLOCK_MONOTONIC, &t0);
+                int ms = 0;
+                while (!src->closing && !src->restart && ms < 1000 * fails) {
+                    cond_wait_ms(&src->cv, &src->mx, 1000 * fails - ms);
+                    clock_gettime(CLOCK_MONOTONIC, &t);
+                    ms = (int)((t.tv_sec - t0.tv_sec) * 1000 + (t.tv_nsec - t0.tv_nsec) / 1000000);
+                }
             }
         }
         pthread_cond_broadcast(&src->cv);
