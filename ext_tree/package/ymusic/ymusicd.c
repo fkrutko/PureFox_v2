@@ -2099,7 +2099,7 @@ static void q_clear(void)
 static struct {
     snd_pcm_t *pcm;
     unsigned rate, ch, bits;                         /* поток */
-    int bps, shift;                                  /* байт на сэмпл ALSA, сдвиг сэмпла влево */
+    int bps, width, shift;                           /* байт на сэмпл ALSA, бит в нём, сдвиг сэмпла влево */
     snd_pcm_uframes_t buffer, period;
     long long w;                                     /* кадров записано с открытия или сброса */
     unsigned char *cb;
@@ -2123,17 +2123,33 @@ static void out_close(void)
     pthread_mutex_unlock(&g_pl_mx);
 }
 
+/* Открытый вывод подходит потоку: та же частота и каналы, сэмпл помещается в контейнер */
+static int out_fits(unsigned rate, unsigned ch, unsigned bits)
+{
+    return g_out.pcm && g_out.rate == rate && g_out.ch == ch && (int)bits <= g_out.width;
+}
+
 /* Открыть g_dev под формат потока, как MPD с auto_format/auto_resample no: частота — только
- * своя, сэмпл — без изменений, при нужде в более широком контейнере (младшие биты — нули) */
+ * своя, сэмпл — без изменений, в 32-битном контейнере (младшие биты — нули). Контейнер один на
+ * 16 и 24 бита: смена разрядности между треками не переоткрывает устройство, на I2S такты не
+ * останавливаются и ЦАП не теряет захват. Биты на линии те же: слот I2S и так 32-битный */
 static int out_open(unsigned rate, unsigned ch, unsigned bits, char *err, size_t esz)
 {
-    if (g_out.pcm && g_out.rate == rate && g_out.ch == ch && g_out.bits == bits) return 0;
+    if (out_fits(rate, ch, bits)) {
+        if (g_out.bits != bits) {
+            g_out.bits = bits;
+            g_out.shift = g_out.width - (int)bits;
+            logm(0, "ALSA %s: %u бит в том же %u-битном контейнере", g_dev, bits, g_out.width);
+        }
+        return 0;
+    }
     out_close();
     static const struct { snd_pcm_format_t f; int bytes, width; } fm[] = {
         { SND_PCM_FORMAT_S16_LE, 2, 16 }, { SND_PCM_FORMAT_S24_LE, 4, 24 },
         { SND_PCM_FORMAT_S32_LE, 4, 32 }, { SND_PCM_FORMAT_S24_3LE, 3, 24 },
     };
-    static const int o16[] = { 0, 2, 1, 3, -1 }, o24[] = { 1, 2, 3, -1 }, o32[] = { 2, -1 };
+    /* сначала 32 бита, потом 24 в 4 байтах: в них поместится и следующий трек другой разрядности */
+    static const int o16[] = { 2, 1, 0, 3, -1 }, o24[] = { 2, 1, 3, -1 }, o32[] = { 2, -1 };
     const int *ord = bits <= 16 ? o16 : bits <= 24 ? o24 : o32;
     snd_pcm_t *p;
     snd_pcm_hw_params_t *hw;
@@ -2178,6 +2194,7 @@ static int out_open(unsigned rate, unsigned ch, unsigned bits, char *err, size_t
     g_out.ch = ch;
     g_out.bits = bits;
     g_out.bps = fm[k].bytes;
+    g_out.width = fm[k].width;
     g_out.shift = fm[k].width - (int)bits;
     g_out.w = 0;
     g_out.hpos = g_out.hn = 0;
@@ -2197,8 +2214,9 @@ fail:
     return -1;
 }
 
-/* кадры int32 -> формат ALSA -> устройство; -1 — устройство отказало */
-static int out_write(const int32_t *s, size_t frames)
+/* кадры int32, сдвинутые на sh -> формат ALSA -> устройство; -1 — устройство отказало.
+ * В кольцо hist — уже сдвинутые: разрядность может смениться, пока они лежат в буфере */
+static int out_write_sh(const int32_t *s, size_t frames, int sh)
 {
     size_t ns = frames * g_out.ch, need = ns * (size_t)g_out.bps;
     if (need > g_out.ccap) {
@@ -2208,7 +2226,6 @@ static int out_write(const int32_t *s, size_t frames)
         g_out.ccap = need;
     }
     unsigned char *o = g_out.cb;
-    int sh = g_out.shift;
     for (size_t i = 0; i < ns; i++) {
         uint32_t v = (uint32_t)s[i] << sh;
         o[0] = (unsigned char)v;
@@ -2220,7 +2237,10 @@ static int out_write(const int32_t *s, size_t frames)
     size_t hf = g_out.hcap / g_out.ch;               /* копия — в кольцо hist */
     for (size_t i = frames > hf ? frames - hf : 0; hf && i < frames; ) {
         size_t k = frames - i < hf - g_out.hpos ? frames - i : hf - g_out.hpos;
-        memcpy(g_out.hist + g_out.hpos * g_out.ch, s + i * g_out.ch, k * g_out.ch * sizeof *s);
+        const int32_t *from = s + i * g_out.ch;
+        int32_t *to = g_out.hist + g_out.hpos * g_out.ch;
+        for (size_t j = 0; j < k * g_out.ch; j++)
+            to[j] = (int32_t)((uint32_t)from[j] << sh);
         g_out.hpos = (g_out.hpos + k) % hf;
         g_out.hn = g_out.hn + k > hf ? hf : g_out.hn + k;
         i += k;
@@ -2242,6 +2262,12 @@ static int out_write(const int32_t *s, size_t frames)
         g_out.w += w;
     }
     return 0;
+}
+
+/* кадры трека (сэмпл в младших битах) -> устройство */
+static int out_write(const int32_t *s, size_t frames)
+{
+    return out_write_sh(s, frames, g_out.shift);
 }
 
 /* Поток ALSA не останавливаем, пока играем: остановка (и пауза ALSA) на I2S гасит такты, ЦАП
@@ -2393,7 +2419,7 @@ static void pl_pause(unsigned gen)
     if (go) {
         long long at = g_out.w;
         if (g_pend.on && g_pend.w >= wr) g_pend.w += at - wr;
-        if (keep) out_write(keep, n);
+        if (keep) out_write_sh(keep, n, 0);         /* из hist: уже сдвинуты */
         pthread_mutex_lock(&g_pl_mx);
         if (w0 != W_NONE && g_pl.w0 == W_NONE) g_pl.w0 = at;
         pthread_mutex_unlock(&g_pl_mx);
@@ -2412,7 +2438,7 @@ static int play_track(const qent_t *e, unsigned gen, double seek)
     if (!(d.src = src_open(e->t.tid, gen))) return -1;
     int rc = dec_open(&d, err, sizeof err);
     if (!rc && seek > 0 && dec_seek(&d, seek)) seek = 0;
-    if (!rc && g_out.pcm && (g_out.rate != d.rate || g_out.ch != d.ch || g_out.bits != d.bits)) {
+    if (!rc && g_out.pcm && !out_fits(d.rate, d.ch, d.bits)) {
         rc = out_drain(gen);                         /* формат другой: сначала доиграть прошлый */
         if (!rc) out_close();
     }
