@@ -49,7 +49,7 @@ DSD_SWAP=$(grep '^DSD_SWAP=' /etc/i2s.conf | cut -d'=' -f2 | tr -d '[:space:]')
 FREQ_SWAP=$(grep '^FREQ_SWAP=' /etc/i2s.conf | cut -d'=' -f2 | tr -d '[:space:]')
 [ -n "$FREQ_SWAP" ] && echo "$FREQ_SWAP" > /sys/devices/platform/ffae0000.i2s/freq_domain_invert || echo 0 > /sys/devices/platform/ffae0000.i2s/freq_domain_invert
 
-# Keep BCLK/LRCK running between PCM streams (kernels 6.1 and 5.10; not 1.6)
+# Keep BCLK/LRCK running between PCM streams (all kernels; the file is missing on older builds)
 KEEP_CLOCKS=$(grep '^KEEP_CLOCKS=' /etc/i2s.conf | cut -d'=' -f2 | tr -d '[:space:]')
 [ -w /sys/devices/platform/ffae0000.i2s/keep_clocks ] && echo "${KEEP_CLOCKS:-0}" > /sys/devices/platform/ffae0000.i2s/keep_clocks
 

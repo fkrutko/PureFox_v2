@@ -1731,7 +1731,7 @@ $(document).ready(function () {
                     $('#modal-freq-normal').prop('checked', true);
                 }
                 
-                // Set "clocks in pause" toggle (not on kernel 1.6)
+                // Set "clocks in pause" toggle (hidden if the kernel lacks it)
                 $('#i2s-keep-clocks-group').toggle(data.keep_clocks_supported !== false);
                 if (data.keep_clocks === '1') {
                     $('#modal-keep-clocks-on').prop('checked', true);
