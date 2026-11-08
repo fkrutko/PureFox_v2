@@ -1815,7 +1815,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
  #define DRV_NAME "rockchip-i2s-tdm"
  
-@@ -33,518 +49,620 @@
+@@ -33,518 +49,625 @@
  #define HAVE_SYNC_RESET
  #endif
  
@@ -2066,6 +2066,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    /* Add pause state */
 +    bool playback_paused;
 +    bool capture_paused;
++
++    /* Keep BCLK/LRCK running between PCM streams (sysfs keep_clocks) */
++    bool keep_clocks;
++    bool clocks_held;               /* bus running with no stream on it */
++    bool pause_kept;                /* paused with the bus left running */
 +    
 +    /* Debounce for auto-mute */
 +    unsigned long last_auto_mute_time;
@@ -2873,7 +2878,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +672,3378 @@
+@@ -554,3020 +677,3561 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -3694,6 +3699,119 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    return i2s_tdm->playback_paused;
 +    else
 +    return i2s_tdm->capture_paused;
++}
++
++/*
++ * Keep the I2S clocks running between PCM streams (sysfs keep_clocks).
++ *
++ * Normally STOP and PAUSE halt BCLK/LRCK. Many DACs then lose lock and take
++ * a second or more to lock again when the next stream starts, so the start
++ * of a track goes missing; some also click relays or reset their display.
++ * With keep_clocks on, a PCM stream that stops or pauses only stops its
++ * DMA: the transmitter keeps running with silence (zeros) and the DAC stays
++ * locked. The next PCM stream takes the running bus over. A change of rate
++ * or format still reprograms the bus (rockchip_i2s_tdm_params_trcm).
++ *
++ * DSD always stops the bus: zero data is no DSD silence, and some DACs and
++ * converters misbehave on a clocked DSD bus without data.
++ *
++ * While the bus runs without a stream the driver holds a runtime PM
++ * reference (runtime suspend would gate MCLK) and, in TRCM mode, the
++ * transfer reference the stopped stream owned.
++ */
++
++/* TX FIFO words per frame: DMA writes 32-bit words, so two 16-bit samples
++ * share a word and wider samples take one each */
++static unsigned int rockchip_i2s_tdm_tx_frame_words(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    unsigned int txcr = 0, vdw, words;
++
++    regmap_read(i2s_tdm->regmap, I2S_TXCR, &txcr);
++    vdw = ((txcr & I2S_TXCR_VDW_MASK) >> I2S_TXCR_VDW_SHIFT) + 1;
++    words = to_ch_num(txcr & I2S_TXCR_CSR_MASK);
++    if (vdw <= 16)
++        words = max(words / 2, 1u);
++    return words;
++}
++
++/* Stop the playback DMA but leave the bus running. The FIFO still holds the
++ * last samples; two frames of zeros go after them, so the line ends on
++ * silence whatever the transmitter sends once the FIFO is empty. DMA always
++ * writes whole frames, so the zeros start on a frame boundary. */
++static void rockchip_i2s_tdm_idle_tx(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    unsigned int i, words;
++
++    rockchip_i2s_tdm_dma_ctrl(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, 0);
++    words = 2 * rockchip_i2s_tdm_tx_frame_words(i2s_tdm);
++    for (i = 0; i < words; i++)
++        regmap_write(i2s_tdm->regmap, I2S_TXDR, 0);
++}
++
++/* Feed a bus that kept running without data. The FIFO ran dry meanwhile.
++ * With one FIFO word per frame (16-bit stereo) the next word still starts a
++ * frame and the bus just goes on. With a word per sample the transmitter may
++ * pick the data up in the right channel's slot, so do the STOP-CLEAR-START
++ * Rockchip suggests for always-on buses: LRCK stops for ~0.2 ms instead of
++ * for the whole gap between streams. */
++static void rockchip_i2s_tdm_feed_tx(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    if (rockchip_i2s_tdm_tx_frame_words(i2s_tdm) > 1) {
++        rockchip_i2s_tdm_xfer_stop(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, true);
++        rockchip_i2s_tdm_dma_ctrl(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, 1);
++        rockchip_i2s_tdm_xfer_start(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK);
++    } else {
++        rockchip_i2s_tdm_dma_ctrl(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, 1);
++    }
++}
++
++/* May this playback stream leave the bus running when it stops or pauses? */
++static bool rockchip_i2s_tdm_can_keep_clocks(struct rk_i2s_tdm_dev *i2s_tdm,
++                                             struct snd_pcm_substream *substream)
++{
++    return i2s_tdm->keep_clocks && i2s_tdm->is_master_mode && substream &&
++           substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
++           !i2s_tdm->dsd_mode_active && !is_dsd(substream->runtime->format) &&
++           is_stream_active(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK);
++}
++
++/* STOP of a PCM stream: leave the bus running with silence */
++static void rockchip_i2s_tdm_hold_clocks(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    unsigned long flags;
++
++    rockchip_i2s_tdm_idle_tx(i2s_tdm);
++    pm_runtime_get_noresume(i2s_tdm->dev);
++    spin_lock_irqsave(&i2s_tdm->lock, flags);
++    i2s_tdm->clocks_held = true;
++    spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++    dev_dbg(i2s_tdm->dev, "Playback stopped, I2S clocks kept running\n");
++}
++
++/* Take a running bus over; false when the bus was not held */
++static bool rockchip_i2s_tdm_take_clocks(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    unsigned long flags;
++    bool held;
++
++    spin_lock_irqsave(&i2s_tdm->lock, flags);
++    held = i2s_tdm->clocks_held;
++    i2s_tdm->clocks_held = false;
++    spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++    return held;
++}
++
++/* Stop a held bus: keep_clocks turned off, a DSD stream comes, removal */
++static void rockchip_i2s_tdm_release_clocks(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++    if (!rockchip_i2s_tdm_take_clocks(i2s_tdm))
++        return;
++    if (i2s_tdm->clk_trcm)
++        rockchip_i2s_tdm_xfer_trcm_stop(i2s_tdm);
++    else
++        rockchip_i2s_tdm_xfer_stop(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, false);
++    pm_runtime_put(i2s_tdm->dev);
++    dev_dbg(i2s_tdm->dev, "Held I2S clocks stopped\n");
  }
  
  static void rockchip_i2s_tdm_start(struct rk_i2s_tdm_dev *i2s_tdm, int stream)
@@ -3722,6 +3840,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    }
 +
 +    /* Note: Mute is now handled in trigger with proper delayed start timing */
++
++    /* The bus kept running since the last PCM stream: just feed it */
++    if (stream == SNDRV_PCM_STREAM_PLAYBACK &&
++        rockchip_i2s_tdm_take_clocks(i2s_tdm)) {
++        rockchip_i2s_tdm_feed_tx(i2s_tdm);
++        pm_runtime_put(i2s_tdm->dev);
++        return;
++    }
 +
 +    /* Always start DMA and transmission */
 +    rockchip_i2s_tdm_dma_ctrl(i2s_tdm, stream, 1);
@@ -3807,6 +3933,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    i2s_tdm->capture_paused = true;
 +    }
 +
++    /* keep_clocks: stop only the DMA, the bus goes on with silence */
++    if (rockchip_i2s_tdm_can_keep_clocks(i2s_tdm, i2s_tdm->substreams[stream])) {
++        rockchip_i2s_tdm_idle_tx(i2s_tdm);
++        i2s_tdm->pause_kept = true;
++        dev_dbg(i2s_tdm->dev, "Playback paused, I2S clocks kept running\n");
++        return;
++    }
++
 +    /* Disable DMA but preserve device state */
 +    rockchip_i2s_tdm_dma_ctrl(i2s_tdm, stream, 0);
 +    
@@ -3842,6 +3976,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    if (!i2s_tdm->capture_paused)
 +        return;
 +    i2s_tdm->capture_paused = false;
++    }
++
++    if (stream == SNDRV_PCM_STREAM_PLAYBACK && i2s_tdm->pause_kept) {
++        i2s_tdm->pause_kept = false;
++        rockchip_i2s_tdm_feed_tx(i2s_tdm);
++        return;
 +    }
 +
 +    /* Use special function for TRCM mode */
@@ -5238,6 +5378,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    dma_data = snd_soc_dai_get_dma_data(dai, substream);
 +    dma_data->maxburst = MAXBURST_PER_FIFO * params_channels(params) / 2;
 +
++    /* A bus kept running between PCM streams must stop before DSD */
++    if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
++        is_dsd(params_format(params)))
++        rockchip_i2s_tdm_release_clocks(i2s_tdm);
++
 +
 +    /* Note: Mute is now handled in trigger for proper timing */
 +    
@@ -5555,6 +5700,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            dev_dbg(i2s_tdm->dev, "TRIGGER STOP: Mute enabled (no signal)\n");
 +        }
 +        mutex_unlock(&i2s_tdm->mute_lock);
++
++        /* keep_clocks: the bus goes on with silence until the next stream */
++        i2s_tdm->pause_kept = false;
++        if (cmd == SNDRV_PCM_TRIGGER_STOP &&
++            rockchip_i2s_tdm_can_keep_clocks(i2s_tdm, substream)) {
++            rockchip_i2s_tdm_hold_clocks(i2s_tdm);
++            break;
++        }
 +    } else {
 +        i2s_tdm->capture_paused = false;
 +    }
@@ -6300,6 +6453,35 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +}
 +
 +static DEVICE_ATTR(freq_domain_invert, 0644, freq_domain_invert_show, freq_domain_invert_store);
++
++/* Keep BCLK/LRCK running between PCM streams: 0 or 1 */
++static ssize_t keep_clocks_show(struct device *dev,
++                                struct device_attribute *attr, char *buf)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++
++    return sprintf(buf, "%d\n", i2s_tdm->keep_clocks ? 1 : 0);
++}
++
++static ssize_t keep_clocks_store(struct device *dev,
++                                 struct device_attribute *attr,
++                                 const char *buf, size_t count)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++    int value;
++
++    if (sscanf(buf, "%d", &value) != 1 || (value != 0 && value != 1))
++        return -EINVAL;
++
++    i2s_tdm->keep_clocks = value;
++    if (!value)
++        rockchip_i2s_tdm_release_clocks(i2s_tdm);
++    dev_info(dev, "Keep I2S clocks between streams: %s\n", value ? "ON" : "OFF");
++
++    return count;
++}
++
++static DEVICE_ATTR(keep_clocks, 0644, keep_clocks_show, keep_clocks_store);
 +
 +/* Manual DSD mode control sysfs interface */
 +static ssize_t dsd_mode_manual_show(struct device *dev,
@@ -8401,6 +8583,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        dev_err(&pdev->dev, "Failed to create freq_domain_invert sysfs attribute: %d\n", ret);
 +        /* Not critical, continue */
 +    }
++
++    ret = device_create_file(&pdev->dev, &dev_attr_keep_clocks);
++    if (ret)
++        dev_err(&pdev->dev, "Failed to create keep_clocks sysfs attribute: %d\n", ret);
 +    
 +    /* Create sysfs attribute for manual DSD mode control */
 +    ret = device_create_file(&pdev->dev, &dev_attr_dsd_mode_manual);
@@ -8463,6 +8649,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    device_remove_file(&pdev->dev, &dev_attr_pcm_channel_swap);
 +    device_remove_file(&pdev->dev, &dev_attr_dsd_physical_swap);
 +    device_remove_file(&pdev->dev, &dev_attr_freq_domain_invert);
++    device_remove_file(&pdev->dev, &dev_attr_keep_clocks);
++    rockchip_i2s_tdm_release_clocks(i2s_tdm);
 +
 +    pm_runtime_disable(&pdev->dev);
 +    if (!pm_runtime_status_suspended(&pdev->dev))

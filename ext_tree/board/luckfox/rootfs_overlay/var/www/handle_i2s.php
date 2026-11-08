@@ -136,6 +136,26 @@ if (isset($_POST['freq_swap'])) {
     }
 }
 
+// If "keep clocks between streams" is changed (applies at once, no reboot)
+if (isset($_POST['keep_clocks'])) {
+    $keep_clocks = $_POST['keep_clocks'];
+    if (in_array($keep_clocks, ['0', '1'])) {
+        $sysfs = '/sys/devices/platform/ffae0000.i2s/keep_clocks';
+        if (is_writable($sysfs)) {
+            file_put_contents($sysfs, $keep_clocks);
+        }
+
+        $contents = file_exists($config_file) ? file_get_contents($config_file) : '';
+        $pattern = '/^KEEP_CLOCKS=.*$/m';
+        if (preg_match($pattern, $contents)) {
+            $contents = preg_replace($pattern, "KEEP_CLOCKS=$keep_clocks", $contents);
+        } else {
+            $contents = rtrim($contents) . "\n\n### Keep I2S clocks running between PCM streams: 0 or 1 ###\nKEEP_CLOCKS=$keep_clocks\n";
+        }
+        file_put_contents($config_file, $contents);
+    }
+}
+
 // If LeftJust setting is changed
 if (isset($_POST['leftjust'])) {
     $leftjust = $_POST['leftjust'];
@@ -158,7 +178,8 @@ if (isset($_POST['leftjust'])) {
 
 // AJAX request for current status
 if (isset($_GET['action']) && $_GET['action'] === 'getStatus') {
-    $result = ['mode' => '', 'mclk' => '', 'submode' => '', 'pcm_swap' => '0', 'dsd_swap' => '1', 'freq_swap' => '0', 'leftjust' => '0'];
+    $result = ['mode' => '', 'mclk' => '', 'submode' => '', 'pcm_swap' => '0', 'dsd_swap' => '1', 'freq_swap' => '0', 'leftjust' => '0',
+               'keep_clocks' => '0', 'keep_clocks_supported' => file_exists('/sys/devices/platform/ffae0000.i2s/keep_clocks')];
 
     if (file_exists($config_file)) {
         $contents = file_get_contents($config_file);
@@ -184,6 +205,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'getStatus') {
         }
         if (preg_match('/^LEFTJUST=([01])/m', $contents, $matches)) {
             $result['leftjust'] = $matches[1];
+        }
+        if (preg_match('/^KEEP_CLOCKS=([01])/m', $contents, $matches)) {
+            $result['keep_clocks'] = $matches[1];
         }
     }
 

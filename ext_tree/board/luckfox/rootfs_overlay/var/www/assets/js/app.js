@@ -108,6 +108,7 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
+            'keep_clocks_title': 'Такты в паузе',
             'leftjust_title': 'LeftJust',
             'confirm_kernel': 'Перезагрузить LuckFox с ядром Linux %s?<br>Ядро будет записано во флеш-память, не отключайте питание.',
             'switching_kernel': 'Переключение ядра и перезагрузка...',
@@ -193,6 +194,7 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
+            'keep_clocks_title': 'Clocks in pause',
             'leftjust_title': 'LeftJust',
             'confirm_kernel': 'Reboot LuckFox with Linux kernel %s?<br>The kernel is written to flash, do not power off.',
             'switching_kernel': 'Switching kernel and rebooting...',
@@ -278,6 +280,7 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
+            'keep_clocks_title': 'Takt in Pause',
             'leftjust_title': 'LeftJust',
             'confirm_kernel': 'LuckFox mit Linux-Kernel %s neu starten?<br>Der Kernel wird in den Flash geschrieben, Strom nicht trennen.',
             'switching_kernel': 'Kernel wird gewechselt, Neustart...',
@@ -363,6 +366,7 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
+            'keep_clocks_title': 'Horloges en pause',
             'leftjust_title': 'LeftJust',
             'confirm_kernel': 'Redémarrer LuckFox avec le noyau Linux %s ?<br>Le noyau est écrit en mémoire flash, ne coupez pas l\'alimentation.',
             'switching_kernel': 'Changement de noyau et redémarrage...',
@@ -448,6 +452,7 @@ $(document).ready(function () {
             'pcm_swap_title': 'PCM Swap',
             'dsd_swap_title': 'DSD Swap',
             'freq_swap_title': '44/48 Swap',
+            'keep_clocks_title': '暂停时保持时钟',
             'leftjust_title': 'LeftJust',
             'confirm_kernel': '使用 Linux 内核 %s 重启 LuckFox？<br>内核将写入闪存，请勿断电。',
             'switching_kernel': '正在切换内核并重启...',
@@ -1726,6 +1731,14 @@ $(document).ready(function () {
                     $('#modal-freq-normal').prop('checked', true);
                 }
                 
+                // Set "clocks in pause" toggle (not on kernel 1.6)
+                $('#i2s-keep-clocks-group').toggle(data.keep_clocks_supported !== false);
+                if (data.keep_clocks === '1') {
+                    $('#modal-keep-clocks-on').prop('checked', true);
+                } else {
+                    $('#modal-keep-clocks-off').prop('checked', true);
+                }
+
                 // Set leftjust toggle
                 if (data.leftjust === '1') {
                     $('#modal-leftjust-on').prop('checked', true);
@@ -1867,6 +1880,8 @@ $(document).ready(function () {
                 formData.append('dsd_swap', this.value);
             } else if (this.name === 'freq_swap') {
                 formData.append('freq_swap', this.value);
+            } else if (this.name === 'keep_clocks') {
+                formData.append('keep_clocks', this.value);
             } else if (this.name === 'leftjust') {
                 formData.append('leftjust', this.value);
             }

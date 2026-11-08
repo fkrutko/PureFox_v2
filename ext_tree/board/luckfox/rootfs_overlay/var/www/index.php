@@ -308,6 +308,20 @@
                         </div>
                     </div>
                 </div>
+                <div class="i2s-group" id="i2s-keep-clocks-group">
+                    <div class="i2s-group-header">
+                        <h3 data-lang="keep_clocks_title">Clocks in pause</h3>
+                        <div class="toggle-switch-compact">
+                            <input type="radio" name="keep_clocks" value="0" id="modal-keep-clocks-off" class="toggle-input-compact">
+                            <input type="radio" name="keep_clocks" value="1" id="modal-keep-clocks-on" class="toggle-input-compact">
+                            <label class="toggle-label-compact">
+                                <div class="toggle-slider-compact"></div>
+                                <span class="toggle-option-compact left" onclick="document.getElementById('modal-keep-clocks-off').click()">OFF</span>
+                                <span class="toggle-option-compact right" onclick="document.getElementById('modal-keep-clocks-on').click()">ON</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
                 <div class="i2s-group" style="display:none;">
                     <div class="i2s-group-header">
                         <h3 data-lang="leftjust_title">LeftJust</h3>
