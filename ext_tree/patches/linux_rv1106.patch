@@ -1815,7 +1815,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
  #define DRV_NAME "rockchip-i2s-tdm"
  
-@@ -33,518 +49,618 @@
+@@ -33,518 +49,620 @@
  #define HAVE_SYNC_RESET
  #endif
  
@@ -2040,8 +2040,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    int clk_ppm;
 +    atomic_t refcount;
 +    spinlock_t lock; /* xfer lock */
-+    snd_pcm_uframes_t mute_appl_ptr;   /* PCM queued up to here was checked for mute */
++    snd_pcm_uframes_t mute_appl_ptr;   /* audio queued up to here was checked for mute */
 +    bool mute_appl_ptr_valid;
++    snd_pcm_uframes_t automute_start;  /* stream position where playback starts */
++    snd_pcm_uframes_t automute_frames; /* frames silenced from there by the start mute */
 +    void *dsd_stage;                /* cached staging buffer for the DSD word swap */
 +    size_t dsd_stage_bytes;
 +    bool mute;
@@ -2871,7 +2873,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +670,3365 @@
+@@ -554,3020 +672,3378 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -6035,7 +6037,8 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            
 +            if (runtime && runtime->status->state == SNDRV_PCM_STATE_RUNNING && runtime->dma_area) {
 +                /* Clear current DMA buffers for immediate silence */
-+                memset(runtime->dma_area, 0, runtime->dma_bytes);
++                memset(runtime->dma_area, is_dsd(runtime->format) ? 0x55 : 0,
++                       runtime->dma_bytes);
 +                dev_dbg(i2s_tdm->dev, "DMA buffers cleared for immediate mute\n");
 +            }
 +        }
@@ -6507,7 +6510,6 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +         * DSD1024). Stage the swap in a cached buffer instead so the
 +         * uncached DMA buffer is written exactly once. */
 +        if (i2s_tdm->dsd_sample_swap && i2s_tdm->dsd_mode_active &&
-+            !(i2s_tdm->mute || i2s_tdm->auto_mute_active) &&
 +            (substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U32_LE ||
 +             substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U32_BE) &&
 +            bytes >= 4 && (bytes % 4) == 0 &&
@@ -6526,31 +6528,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            goto skip_dsd_processing;
 +        }
 +
-+        /* PLAYBACK: copy raw samples. PCM mute is applied in
++        /* PLAYBACK: copy raw samples. Mute (PCM and DSD) is applied in
 +         * rockchip_i2s_tdm_pcm_ack(), shared by writei and mmap paths. */
 +        if (copy_from_user(dma_area, buf, bytes))
 +            return -EFAULT;
-+
-+        /* DSD MUTE: Replace data with silence signal (50% duty cycle) */
-+        if ((i2s_tdm->mute || i2s_tdm->auto_mute_active) && i2s_tdm->dsd_mode_active &&
-+            (substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U32_LE || 
-+             substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U32_BE ||
-+             substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U16_LE) && 
-+            bytes >= 4) {
-+            
-+            /* For DSD silence = 50% duty cycle meander within each byte */
-+            uint8_t *data = (uint8_t *)dma_area;
-+            uint32_t i;
-+            
-+            for (i = 0; i < bytes; i++) {
-+                data[i] = 0x55;  /* 01010101 - perfect 50% duty cycle meander for DSD silence */
-+            }
-+            
-+            dev_dbg(i2s_tdm->dev, "DSD Mute: replaced %lu bytes with silence signal\n", bytes);
-+            
-+            /* During mute do not apply sample swap - send clean silence signal */
-+            goto skip_dsd_processing;
-+        }
 +
 +        /* CRITICAL FIX FOR DSD: Swap upper and lower 16 bits */
 +        if (i2s_tdm->dsd_sample_swap && i2s_tdm->dsd_mode_active &&
@@ -6603,48 +6584,82 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            if (!i2s_tdm->dsd_stage)
 +                dev_warn(component->dev, "DSD staging buffer allocation failed\n");
 +        }
-+        i2s_tdm->mute_appl_ptr = substream->runtime->control->appl_ptr;
-+        i2s_tdm->mute_appl_ptr_valid = true;
++        /* ALSA resets hw_ptr/appl_ptr after this callback, so the queue
++         * position is taken on the first ack (see rockchip_i2s_tdm_pcm_ack) */
++        i2s_tdm->mute_appl_ptr_valid = false;
++        i2s_tdm->automute_frames = div_u64((u64)substream->runtime->rate *
++                                           i2s_tdm->postmute_delay_ms, 1000);
 +    }
 +
 +    return 0;
 +}
 +
-+/* Zero newly queued PCM while muted (software mute for DACs without a mute
-+ * GPIO). Otherwise samples pass through untouched. */
++/* Silence newly queued audio while muted (software mute for DACs without a
++ * mute GPIO), for the writei and mmap paths alike.
++ *
++ * User mute (the ALSA mute control or sysfs) silences everything queued
++ * while it is on. The automatic mute around stream start silences only the
++ * first postmute_delay_ms of the stream, counted from the buffer position
++ * where playback starts: that is what plays while the DAC locks and the
++ * mute GPIO is held. Audio queued beyond that window, including the prefill
++ * a player writes before TRIGGER_START, reaches the DAC untouched. Muting it
++ * at write time instead used to drop up to a whole buffer (1-2 s) from the
++ * start of every stream.
++ *
++ * PCM silence is zero, DSD silence the 0x55 pattern (unchanged by the DSD
++ * half-word swap). Otherwise samples pass through untouched. */
 +static int rockchip_i2s_tdm_pcm_ack(struct snd_soc_component *component,
 +                                     struct snd_pcm_substream *substream)
 +{
 +    struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
 +    struct snd_pcm_runtime *runtime = substream->runtime;
-+    snd_pcm_uframes_t appl_ptr, frames, offset, chunk;
-+    bool muted;
++    snd_pcm_uframes_t appl_ptr, start, frames, into, offset, chunk;
++    int fill;
 +
-+    if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK ||
-+        i2s_tdm->dsd_mode_active)
++    if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
 +        return 0;
 +
 +    appl_ptr = READ_ONCE(runtime->control->appl_ptr);
 +    if (!i2s_tdm->mute_appl_ptr_valid) {
-+        i2s_tdm->mute_appl_ptr = appl_ptr;
++        /* First ack since prepare: the stream has not started yet, so
++         * hw_ptr is where playback will begin and everything from there
++         * to appl_ptr was just queued. */
++        i2s_tdm->automute_start = READ_ONCE(runtime->status->hw_ptr);
++        i2s_tdm->mute_appl_ptr = i2s_tdm->automute_start;
 +        i2s_tdm->mute_appl_ptr_valid = true;
++    }
++
++    start = i2s_tdm->mute_appl_ptr;
++    if (appl_ptr >= start)
++        frames = appl_ptr - start;
++    else
++        frames = runtime->boundary - start + appl_ptr;
++    i2s_tdm->mute_appl_ptr = appl_ptr;
++
++    /* A rewind moves appl_ptr back: nothing new was queued */
++    if (!frames || frames > runtime->buffer_size)
++        return 0;
++
++    if (i2s_tdm->user_mute_priority) {
++        /* user mute: silence all of it */
++    } else if (i2s_tdm->mute || i2s_tdm->auto_mute_active) {
++        /* start mute: only the part inside the start-up window */
++        if (start >= i2s_tdm->automute_start)
++            into = start - i2s_tdm->automute_start;
++        else
++            into = runtime->boundary - i2s_tdm->automute_start + start;
++        if (into >= i2s_tdm->automute_frames)
++            return 0;
++        frames = min(frames, i2s_tdm->automute_frames - into);
++    } else {
 +        return 0;
 +    }
 +
-+    if (appl_ptr >= i2s_tdm->mute_appl_ptr)
-+        frames = appl_ptr - i2s_tdm->mute_appl_ptr;
-+    else
-+        frames = runtime->boundary - i2s_tdm->mute_appl_ptr + appl_ptr;
-+    offset = i2s_tdm->mute_appl_ptr % runtime->buffer_size;
-+    i2s_tdm->mute_appl_ptr = appl_ptr;
-+
-+    muted = i2s_tdm->mute || i2s_tdm->auto_mute_active;
-+    if (!muted || frames > runtime->buffer_size)
-+        return 0;
-+
++    fill = is_dsd(runtime->format) ? 0x55 : 0;
++    offset = start % runtime->buffer_size;
 +    while (frames) {
 +        chunk = min(frames, runtime->buffer_size - offset);
-+        memset(runtime->dma_area + frames_to_bytes(runtime, offset), 0,
++        memset(runtime->dma_area + frames_to_bytes(runtime, offset), fill,
 +               frames_to_bytes(runtime, chunk));
 +        offset = (offset + chunk) % runtime->buffer_size;
 +        frames -= chunk;
