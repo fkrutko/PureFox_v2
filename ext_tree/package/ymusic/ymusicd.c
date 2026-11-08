@@ -15,7 +15,8 @@
  * Плеер. Ссылка на файл трека — из /get-file-info (подпись HMAC-SHA256 ключом десктопного
  * приложения), файл в транспорте encraw расшифровывается на лету (AES-128-CTR, ключ из ответа,
  * счётчик с нуля) в окно в памяти; перемотка — запрос к CDN с нужного места, обрыв — докачка.
- * FLAC декодирует libFLAC, MP3 — libmad (24 бита, задержка и добивка LAME — как в MPD).
+ * FLAC (и FLAC в MP4 — flac-mp4, свой разбор боксов) декодирует libFLAC, MP3 — libmad
+ * (24 бита, задержка и добивка LAME — как в MPD).
  * Вывод — в ALSA "default" (/etc/asound.conf — выход, выбранный в Фоксе) без громкости и
  * пересчёта частоты: сэмпл как есть, при нужде в более широком контейнере. Следующий трек того
  * же формата идёт без паузы; начала соседних треков очереди заранее в памяти. Поток ALSA не
@@ -409,8 +410,8 @@ static int file_info(const char *tid, finfo_t *fi, char *err, size_t esz)
 
     if (cache_get(tid, q, INFO_TTL, fi)) return 0;
 
-    /* MP4-контейнер (flac-mp4, aac-mp4) плееру не по зубам, поэтому только flac и mp3 */
-    const char *codecs = !strcmp(q, "lossless") ? "flac,mp3" : "mp3";
+    /* lossless без MP4 у Яндекса почти нет: flac-mp4 разбирает m4_open; AAC плееру не по зубам */
+    const char *codecs = !strcmp(q, "lossless") ? "flac,flac-mp4,mp3" : "mp3";
     char codecs_nc[32], msg[256], sig[64];
     size_t j = 0;
     for (const char *p = codecs; *p && j + 1 < sizeof codecs_nc; p++)
@@ -1003,9 +1004,28 @@ static long long src_len(src_t *s)
 /* ---------- декодеры: FLAC (libFLAC), MP3 (libmad) — в int32, каналы чередуются ---------- */
 #define MP3_IN 32768
 
+/* FLAC в MP4 (flac-mp4): сэмплы дорожки — целые кадры FLAC. libFLAC читает поток
+ * «fLaC + STREAMINFO из dfLa» и за ним содержимое mdat подряд. Сплошной файл (один mdat) —
+ * поток линеен, перемотку делает libFLAC; фрагментированный (moof+mdat…) — перемотка своя:
+ * фрагмент по sidx или поиском moof с его tfdt, лишнее до места отбрасывает fl_write */
+typedef struct {
+    unsigned char hdr[42];                           /* fLaC + STREAMINFO */
+    long long vpos;                                  /* место в потоке libFLAC */
+    int frag;
+    long long m0, mlen;                              /* сплошной: mdat [m0, m0 + mlen) */
+    long long fpos, x1, frag0;                       /* фрагм.: читаем с fpos до x1 (конец mdat), первый moof */
+    uint32_t ts;                                     /* timescale дорожки */
+    double mdur;                                     /* длительность по боксам, с */
+    int sx_n;                                        /* sidx: начала фрагментов в файле и их время, с */
+    long long *sx_off;
+    double *sx_t;
+} mp4_t;
+
 typedef struct {
     src_t *src;
-    int flac;
+    int flac, mp4;
+    mp4_t m4;
+    long long skip_to;                               /* после своей перемотки: сэмпл, с которого отдавать; -1 — нет */
     unsigned rate, ch, bits;                         /* bits — значащих в сэмпле int32 */
     double dur;                                      /* с, 0 — неизвестна */
     int kbps;
@@ -1038,10 +1058,307 @@ static int pcm_room(dec_t *d, size_t frames)
     return 0;
 }
 
+/* ---------- MP4: боксы ---------- */
+static uint32_t be32(const unsigned char *p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+static uint64_t be64(const unsigned char *p) { return (uint64_t)be32(p) << 32 | be32(p + 4); }
+
+/* n байт файла с pos; 0 — прочитано */
+static int rd_at(src_t *s, long long pos, void *b, size_t n)
+{
+    src_seek(s, pos);
+    return src_read_full(s, b, n) == (long)n ? 0 : -1;
+}
+
+/* заголовок бокса в файле с pos: тип, полный размер (0 — до конца файла), длина заголовка */
+static int box_at(src_t *s, long long pos, char type[5], long long *size, int *hl)
+{
+    unsigned char h[16];
+    if (rd_at(s, pos, h, 8)) return -1;
+    memcpy(type, h + 4, 4);
+    type[4] = 0;
+    *size = be32(h);
+    *hl = 8;
+    if (*size == 1) {
+        if (rd_at(s, pos + 8, h + 8, 8)) return -1;
+        *size = (long long)be64(h + 8);
+        *hl = 16;
+    }
+    if (*size == 0) {
+        long long t = src_len(s);
+        *size = t > pos ? t - pos : 0;
+    }
+    return *size >= *hl ? 0 : -1;
+}
+
+/* бокс в памяти по пути "trak/mdia/mdhd" среди [p, p + n): содержимое и его длина, NULL — нет */
+static const unsigned char *box_find(const unsigned char *p, size_t n, const char *path, size_t *len)
+{
+    while (*path) {
+        size_t pl = strcspn(path, "/");
+        const unsigned char *hit = NULL;
+        size_t hn = 0;
+        while (n >= 8) {
+            uint64_t sz = be32(p);
+            size_t hl = 8;
+            if (sz == 1) { if (n < 16) return NULL; sz = be64(p + 8); hl = 16; }
+            else if (sz == 0) sz = n;
+            if (sz < hl || sz > n) return NULL;
+            if (pl == 4 && !memcmp(p + 4, path, 4)) { hit = p + hl; hn = (size_t)sz - hl; break; }
+            p += sz;
+            n -= (size_t)sz;
+        }
+        if (!hit) return NULL;
+        p = hit;
+        n = hn;
+        path += pl;
+        if (*path == '/') path++;
+    }
+    *len = n;
+    return p;
+}
+
+/* бокс целиком в память (не больше max) */
+static unsigned char *box_load(src_t *s, long long pos, long long size, long long max)
+{
+    if (size > max) return NULL;
+    unsigned char *b = malloc((size_t)size);
+    if (b && rd_at(s, pos, b, (size_t)size)) { free(b); b = NULL; }
+    return b;
+}
+
+/* время фрагмента (tfdt в moof с at), с; < 0 — нет */
+static double moof_time(dec_t *d, long long at)
+{
+    char ty[5];
+    long long sz;
+    int hl;
+    if (box_at(d->src, at, ty, &sz, &hl) || strcmp(ty, "moof")) return -1;
+    unsigned char *b = box_load(d->src, at, sz, 1 << 20);
+    if (!b) return -1;
+    size_t n;
+    const unsigned char *p = box_find(b + hl, (size_t)(sz - hl), "traf/tfdt", &n);
+    double t = -1;
+    if (p && n >= 8 && d->m4.ts)
+        t = (double)(p[0] == 1 && n >= 12 ? be64(p + 4) : be32(p + 4)) / d->m4.ts;
+    free(b);
+    return t;
+}
+
+/* первый moof не раньше from (ищем «moof….mfhd» в 2 МБ); -1 — нет */
+static long long moof_find(dec_t *d, long long from)
+{
+    unsigned char b[65536 + 12];
+    size_t keep = 0;
+    long long base = from;
+    while (base - from < 2 * 1024 * 1024) {
+        src_seek(d->src, base + (long long)keep);
+        long r = src_read_full(d->src, b + keep, sizeof b - keep);
+        if (r <= 0) return -1;
+        size_t n = keep + (size_t)r;
+        for (size_t i = 4; i + 8 <= n; i++)
+            if (!memcmp(b + i, "moof", 4) && !memcmp(b + i + 8, "mfhd", 4)) {
+                uint32_t sz = be32(b + i - 4);
+                if (sz >= 24 && sz < (1u << 24)) return base + (long long)i - 4;
+            }
+        if (n < sizeof b) return -1;                 /* конец файла */
+        keep = 12;
+        memmove(b, b + n - keep, keep);
+        base += (long long)(n - keep);
+    }
+    return -1;
+}
+
+/* поток libFLAC из MP4: n байт в b; 0 — конец, -1 — ошибка */
+static long m4_read(dec_t *d, unsigned char *b, size_t n)
+{
+    mp4_t *m = &d->m4;
+    if (m->vpos < (long long)sizeof m->hdr) {
+        size_t k = sizeof m->hdr - (size_t)m->vpos;
+        if (k > n) k = n;
+        memcpy(b, m->hdr + m->vpos, k);
+        m->vpos += (long long)k;
+        return (long)k;
+    }
+    long long at, end;
+    if (!m->frag) {
+        at = m->m0 + m->vpos - (long long)sizeof m->hdr;
+        end = m->m0 + m->mlen;
+    } else {
+        while (m->fpos >= m->x1) {                   /* mdat кончился: боксы до следующего mdat */
+            char ty[5];
+            long long sz;
+            int hl;
+            long long t = src_len(d->src);
+            if (t >= 0 && m->x1 >= t) return 0;
+            if (box_at(d->src, m->x1, ty, &sz, &hl)) return t >= 0 ? -1 : 0;
+            if (!strcmp(ty, "mdat")) m->fpos = m->x1 + hl;
+            m->x1 += sz;
+        }
+        at = m->fpos;
+        end = m->x1;
+    }
+    if (at >= end) return 0;
+    if ((long long)n > end - at) n = (size_t)(end - at);
+    src_seek(d->src, at);
+    long r = src_read(d->src, b, n);
+    if (r > 0) {
+        m->vpos += r;
+        m->fpos += r;
+    }
+    return r;
+}
+
+/* фрагментированный: перемотка на t с — к началу фрагмента до t, лишнее отбросит fl_write */
+static int m4_seek(dec_t *d, double t)
+{
+    mp4_t *m = &d->m4;
+    long long at = -1;
+    if (m->sx_n) {
+        at = m->sx_off[0];
+        for (int i = 1; i < m->sx_n && m->sx_t[i] <= t; i++) at = m->sx_off[i];
+    } else if (t < 0.5 || d->dur <= 0) {
+        at = m->frag0;
+    } else {                                         /* по размеру файла, уточняя по tfdt */
+        long long size = src_len(d->src), span = size - m->frag0;
+        if (span <= 0) return -1;
+        double best = -1;                            /* лучший фрагмент: начался не позже t */
+        at = m->frag0;
+        long long pos = m->frag0 + (long long)(t / d->dur * (double)span);
+        for (int it = 0; it < 8; it++) {
+            if (pos < m->frag0) pos = m->frag0;
+            long long a = moof_find(d, pos);
+            double ft = a >= 0 ? moof_time(d, a) : -1;
+            if (a >= 0 && ft < 0) {                  /* нет tfdt — время не проверить */
+                if (best < 0) at = a;
+                break;
+            }
+            if (a < 0) {                             /* за pos moof нет — ближе к найденному */
+                pos = at + (pos - at) / 2;
+                if (pos - at < 4096) break;
+                continue;
+            }
+            if (ft <= t + 0.001) {
+                if (ft > best) { best = ft; at = a; }
+                if (t - ft < 15) break;              /* недалеко — доиграем вхолостую */
+                long long np = a + (long long)((t - ft) / d->dur * (double)span * 0.9);
+                pos = np > a ? np : a + 1;
+            } else {
+                if (a == m->frag0) { at = a; break; }
+                pos -= (long long)((ft - t) / d->dur * (double)span) + 256 * 1024;
+            }
+        }
+    }
+    m->x1 = m->fpos = at;
+    m->vpos = (long long)sizeof m->hdr;
+    if (!FLAC__stream_decoder_flush(d->fl)) return -1;
+    d->skip_to = (long long)(t * d->rate);
+    return 0;
+}
+
+/* разбор MP4 до первого кадра; 0 — FLAC внутри, заголовок для libFLAC готов */
+static int m4_open(dec_t *d, char *err, size_t esz)
+{
+    mp4_t *m = &d->m4;
+    src_t *s = d->src;
+    unsigned char *moov = NULL, *sidx = NULL;
+    long long pos = 0, moov_n = 0, sidx_n = 0, sidx_end = 0, mvex_dur = 0, moof0 = -1;
+    int moov_hl = 8, sidx_hl = 8, rc = -1;
+    m->m0 = -1;
+    for (int g = 0; g < 64; g++) {
+        char ty[5];
+        long long sz;
+        int hl;
+        long long t = src_len(s);
+        if ((t >= 0 && pos >= t) || box_at(s, pos, ty, &sz, &hl)) break;
+        if (!strcmp(ty, "moov") && !moov) {
+            if (!(moov = box_load(s, pos, sz, 8 << 20))) break;
+            moov_n = sz; moov_hl = hl;
+        } else if (!strcmp(ty, "sidx") && !sidx) {
+            sidx = box_load(s, pos, sz, 1 << 20);
+            sidx_n = sz; sidx_hl = hl; sidx_end = pos + sz;
+        } else if (!strcmp(ty, "moof")) {
+            if (moof0 < 0) moof0 = pos;
+        } else if (!strcmp(ty, "mdat") && m->m0 < 0 && moof0 < 0) {
+            m->m0 = pos + hl; m->mlen = sz - hl;
+        }
+        if (moov && (moof0 >= 0 || m->m0 >= 0)) break;
+        pos += sz;
+    }
+    if (!moov) { snprintf(err, esz, "MP4: нет moov"); goto out; }
+    const unsigned char *mv = moov + moov_hl, *p;
+    size_t mn = (size_t)(moov_n - moov_hl), n;
+    if ((p = box_find(mv, mn, "trak/mdia/mdhd", &n)) && n >= 24) {
+        int v1 = p[0] == 1 && n >= 32;
+        m->ts = be32(p + (v1 ? 20 : 12));
+        uint64_t du = v1 ? be64(p + 24) : be32(p + 16);
+        if (m->ts && du && du != (v1 ? UINT64_MAX : 0xffffffffu)) m->mdur = (double)du / m->ts;
+    }
+    if (m->mdur <= 0 && (p = box_find(mv, mn, "mvex/mehd", &n)) && n >= 8)
+        mvex_dur = (long long)(p[0] == 1 && n >= 12 ? be64(p + 4) : be32(p + 4));
+    if (mvex_dur > 0 && (p = box_find(mv, mn, "mvhd", &n)) && n >= 20) {
+        uint32_t mts = be32(p + (p[0] == 1 ? 20 : 12));
+        if (mts) m->mdur = (double)mvex_dur / mts;
+    }
+    /* stsd: запись fLaC, в ней после 28 байт полей звука — dfLa */
+    if (!(p = box_find(mv, mn, "trak/mdia/minf/stbl/stsd", &n)) || n < 16 + 28 || memcmp(p + 12, "fLaC", 4)) {
+        snprintf(err, esz, "MP4: не FLAC");
+        goto out;
+    }
+    size_t en = be32(p + 8);
+    if (en < 8 + 28 || en > n - 8) { snprintf(err, esz, "MP4: stsd"); goto out; }
+    const unsigned char *fl = box_find(p + 8 + 8 + 28, en - 8 - 28, "dfLa", &n);
+    if (!fl || n < 4 + 4 + 34 || (fl[4] & 0x7f) != 0 || be32(fl + 4) != (0x22u | (uint32_t)fl[4] << 24)) {
+        snprintf(err, esz, "MP4: нет STREAMINFO в dfLa");
+        goto out;
+    }
+    memcpy(m->hdr, "fLaC", 4);
+    memcpy(m->hdr + 4, fl + 4, 38);
+    m->hdr[4] = 0x80;                                /* единственный блок метаданных */
+    if (moof0 >= 0) {
+        m->frag = 1;
+        m->frag0 = m->x1 = m->fpos = moof0;
+        if (sidx && sidx_n - sidx_hl >= 24) {
+            const unsigned char *q = sidx + sidx_hl, *e = sidx + sidx_n;
+            int v1 = q[0] == 1;
+            uint32_t sts = be32(q + 8);
+            uint64_t ept = v1 ? be64(q + 12) : be32(q + 12), fo = v1 ? be64(q + 20) : be32(q + 16);
+            q += v1 ? 28 : 20;
+            unsigned cnt = (unsigned)(q[2] << 8 | q[3]);
+            q += 4;
+            if (sts && cnt && q + 12 * (size_t)cnt <= e &&
+                (m->sx_off = malloc(cnt * sizeof *m->sx_off)) && (m->sx_t = malloc(cnt * sizeof *m->sx_t))) {
+                long long o = sidx_end + (long long)fo;
+                uint64_t tt = ept;
+                for (unsigned i = 0; i < cnt; i++, q += 12) {
+                    if (q[0] & 0x80) { m->sx_n = 0; break; }   /* ссылка на другой sidx — не разбираем */
+                    m->sx_off[m->sx_n] = o;
+                    m->sx_t[m->sx_n++] = (double)tt / sts;
+                    o += be32(q) & 0x7fffffff;
+                    tt += be32(q + 4);
+                }
+                if (m->sx_n > 1 && m->mdur <= 0) m->mdur = (double)(tt - ept) / sts;
+                if (m->sx_n < 2) m->sx_n = 0;        /* sidx на один фрагмент (DASH) — искать по moof */
+            }
+        }
+    } else if (m->m0 >= 0) {
+        if (m->mlen <= 0) { snprintf(err, esz, "MP4: пустой mdat"); goto out; }
+    } else {
+        snprintf(err, esz, "MP4: нет данных");
+        goto out;
+    }
+    d->mp4 = 1;
+    rc = 0;
+out:
+    free(moov);
+    free(sidx);
+    return rc;
+}
+
 static FLAC__StreamDecoderReadStatus fl_read(const FLAC__StreamDecoder *f, FLAC__byte b[], size_t *n, void *u)
 {
+    dec_t *d = u;
     (void)f;
-    long r = src_read(((dec_t *)u)->src, b, *n);
+    long r = d->mp4 ? m4_read(d, b, *n) : src_read(d->src, b, *n);
     *n = r > 0 ? (size_t)r : 0;
     return r < 0 ? FLAC__STREAM_DECODER_READ_STATUS_ABORT
          : r ? FLAC__STREAM_DECODER_READ_STATUS_CONTINUE : FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
@@ -1049,22 +1366,35 @@ static FLAC__StreamDecoderReadStatus fl_read(const FLAC__StreamDecoder *f, FLAC_
 
 static FLAC__StreamDecoderSeekStatus fl_seek(const FLAC__StreamDecoder *f, FLAC__uint64 off, void *u)
 {
+    dec_t *d = u;
     (void)f;
-    src_seek(((dec_t *)u)->src, (long long)off);
+    if (d->mp4) {
+        if (d->m4.frag) return FLAC__STREAM_DECODER_SEEK_STATUS_UNSUPPORTED;
+        d->m4.vpos = (long long)off;
+    } else {
+        src_seek(d->src, (long long)off);
+    }
     return FLAC__STREAM_DECODER_SEEK_STATUS_OK;
 }
 
 static FLAC__StreamDecoderTellStatus fl_tell(const FLAC__StreamDecoder *f, FLAC__uint64 *off, void *u)
 {
+    dec_t *d = u;
     (void)f;
-    *off = (FLAC__uint64)src_tell(((dec_t *)u)->src);
+    if (d->mp4) {
+        if (d->m4.frag) return FLAC__STREAM_DECODER_TELL_STATUS_UNSUPPORTED;
+        *off = (FLAC__uint64)d->m4.vpos;
+    } else {
+        *off = (FLAC__uint64)src_tell(d->src);
+    }
     return FLAC__STREAM_DECODER_TELL_STATUS_OK;
 }
 
 static FLAC__StreamDecoderLengthStatus fl_len(const FLAC__StreamDecoder *f, FLAC__uint64 *len, void *u)
 {
+    dec_t *d = u;
     (void)f;
-    long long t = src_len(((dec_t *)u)->src);
+    long long t = d->mp4 ? (d->m4.frag ? -1 : (long long)sizeof d->m4.hdr + d->m4.mlen) : src_len(d->src);
     if (t < 0) return FLAC__STREAM_DECODER_LENGTH_STATUS_UNSUPPORTED;
     *len = (FLAC__uint64)t;
     return FLAC__STREAM_DECODER_LENGTH_STATUS_OK;
@@ -1072,10 +1402,11 @@ static FLAC__StreamDecoderLengthStatus fl_len(const FLAC__StreamDecoder *f, FLAC
 
 static FLAC__bool fl_eof(const FLAC__StreamDecoder *f, void *u)
 {
+    dec_t *d = u;
     (void)f;
-    src_t *s = ((dec_t *)u)->src;
-    long long t = src_len(s);
-    return t >= 0 && src_tell(s) >= t;
+    if (d->mp4) return !d->m4.frag && d->m4.vpos >= (long long)sizeof d->m4.hdr + d->m4.mlen;
+    long long t = src_len(d->src);
+    return t >= 0 && src_tell(d->src) >= t;
 }
 
 static FLAC__StreamDecoderWriteStatus fl_write(const FLAC__StreamDecoder *f, const FLAC__Frame *fr,
@@ -1083,13 +1414,22 @@ static FLAC__StreamDecoderWriteStatus fl_write(const FLAC__StreamDecoder *f, con
 {
     dec_t *d = u;
     (void)f;
-    unsigned n = fr->header.blocksize;
-    if (fr->header.channels != d->ch || fr->header.bits_per_sample != d->bits || pcm_room(d, n))
+    unsigned n = fr->header.blocksize, i = 0;
+    if (fr->header.channels != d->ch || fr->header.bits_per_sample != d->bits)
         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+    if (d->skip_to >= 0) {                           /* своя перемотка: кадры до места — мимо */
+        long long first = fr->header.number_type == FLAC__FRAME_NUMBER_TYPE_SAMPLE_NUMBER
+                        ? (long long)fr->header.number.sample_number
+                        : (long long)fr->header.number.frame_number * n;
+        if (first + n <= d->skip_to) return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+        if (d->skip_to > first) i = (unsigned)(d->skip_to - first);
+        d->skip_to = -1;
+    }
+    if (pcm_room(d, n - i)) return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
     int32_t *o = d->pcm + d->pn * d->ch;
-    for (unsigned i = 0; i < n; i++)
+    for (; i < n; i++)
         for (unsigned c = 0; c < d->ch; c++) *o++ = buf[c][i];
-    d->pn += n;
+    d->pn = (size_t)(o - d->pcm) / d->ch;
     return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
 }
 
@@ -1233,14 +1573,19 @@ static int dec_open_mp3(dec_t *d, char *err, size_t esz)
     return 0;
 }
 
-/* формат по первым байтам: fLaC — FLAC, иначе MP3 */
+/* формат по первым байтам: fLaC — FLAC, ftyp — FLAC в MP4, иначе MP3 */
 static int dec_open(dec_t *d, char *err, size_t esz)
 {
-    unsigned char m[4];
+    unsigned char m[8];
+    d->skip_to = -1;
     long r = src_read_full(d->src, m, sizeof m);
     if (r < (long)sizeof m) { snprintf(err, esz, r < 0 ? "файл не идёт" : "файл пустой"); return -1; }
     src_seek(d->src, 0);
     d->flac = !memcmp(m, "fLaC", 4);
+    if (!memcmp(m + 4, "ftyp", 4)) {
+        if (m4_open(d, err, esz)) return -1;
+        d->flac = 1;
+    }
     if (!d->flac) return dec_open_mp3(d, err, esz);
     if (!(d->fl = FLAC__stream_decoder_new()) ||
         FLAC__stream_decoder_init_stream(d->fl, fl_read, fl_seek, fl_tell, fl_len, fl_eof, fl_write, fl_meta,
@@ -1250,8 +1595,12 @@ static int dec_open(dec_t *d, char *err, size_t esz)
         return -1;
     }
     if (d->samples) d->dur = (double)d->samples / d->rate;
-    long long size = src_len(d->src);
+    else if (d->mp4) d->dur = d->m4.mdur;
+    long long size = d->mp4 && !d->m4.frag ? d->m4.mlen : src_len(d->src);
     if (size > 0 && d->dur > 0) d->kbps = (int)(size * 8 / d->dur / 1000);
+    if (d->mp4)
+        logm(1, "FLAC в MP4%s: %u Гц, %u бит, %u кан., %.1f с%s", d->m4.frag ? " (фрагменты)" : "",
+             d->rate, d->bits, d->ch, d->dur, d->m4.sx_n ? ", sidx" : "");
     return 0;
 }
 
@@ -1303,6 +1652,10 @@ static int dec_seek(dec_t *d, double t)
     d->pn = 0;
     d->held = 0;
     if (t < 0) t = 0;
+    if (d->mp4 && d->m4.frag) {
+        if (d->dur > 0 && t >= d->dur) t = d->dur > 1 ? d->dur - 1 : 0;
+        return m4_seek(d, t);
+    }
     if (d->flac) {
         FLAC__uint64 s = (FLAC__uint64)(t * d->rate);
         if (d->samples && s >= d->samples) s = d->samples - 1;
@@ -1339,6 +1692,8 @@ static int dec_seek(dec_t *d, double t)
 static void dec_close(dec_t *d)
 {
     if (d->fl) FLAC__stream_decoder_delete(d->fl);
+    free(d->m4.sx_off);
+    free(d->m4.sx_t);
     if (d->mad) {
         mad_synth_finish(&d->sy);
         mad_frame_finish(&d->mf);
