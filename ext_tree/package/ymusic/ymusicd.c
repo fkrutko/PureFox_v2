@@ -60,6 +60,7 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
+#include <soxr.h>
 
 #include "cJSON.h"
 
@@ -83,6 +84,7 @@ static const char *g_token_f = "/var/lib/ymusic/token";
 static const char *g_qual_f  = "/var/lib/ymusic/quality";
 static const char *g_api     = "https://api.music.yandex.net";
 static const char *g_dev     = "default";            /* ALSA */
+static const char *g_i2s_f   = "/etc/i2s.conf";      /* RESAMPLE_48=1 — нет генератора 48 кГц */
 static const char *g_cover_d = "/tmp/ymusic";
 static char        g_active_f[300];                   /* <g_cover_d>/active — Яндекс Музыка выбрана плеером */
 static const char *g_transport = "encraw";
@@ -2002,6 +2004,7 @@ static struct {
     double s0;                                       /* место aud, с которого идёт счёт, с */
     long long w0, played;                            /* кадров записано в ALSA к началу aud; сыграно */
     unsigned rate, ch, bits;                         /* формат aud */
+    unsigned orate;                                  /* частота в ALSA (после 48 -> 44,1 кГц) — для места */
     int kbps;
     double dur;
     char codec[8];
@@ -2057,7 +2060,7 @@ static double pl_el(void)
 {
     if (g_pl.state == PS_STOP) return 0;
     long long f = g_pl.played - g_pl.w0;
-    return g_pl.s0 + (g_pl.rate && f > 0 ? (double)f / g_pl.rate : 0);
+    return g_pl.s0 + (g_pl.orate && f > 0 ? (double)f / g_pl.orate : 0);
 }
 
 /* играть песню i с места t (state — PS_PLAY или PS_PAUSE) */
@@ -2068,7 +2071,7 @@ static void pl_go(int i, double t, int state)
     g_pl.seek = t;
     g_pl.s0 = t;
     g_pl.w0 = W_NONE;
-    g_pl.rate = g_pl.ch = g_pl.bits = 0;
+    g_pl.rate = g_pl.orate = g_pl.ch = g_pl.bits = 0;
     g_pl.kbps = 0;
     g_pl.dur = 0;
     g_pl.codec[0] = 0;
@@ -2108,8 +2111,11 @@ static struct {
     size_t hcap, hpos, hn;                           /* вместимость, куда писать, сколько есть — в кадрах */
 } g_out;
 
+static void rs_drop(void);
+
 static void out_close(void)
 {
+    rs_drop();
     if (!g_out.pcm) return;
     snd_pcm_drop(g_out.pcm);
     snd_pcm_close(g_out.pcm);
@@ -2315,6 +2321,144 @@ static size_t out_idle(void)
     return (size_t)n;
 }
 
+/* ---------- 48 -> 44,1 кГц ----------
+ * На плате может стоять только генератор 44,1 кГц (RESAMPLE_48=1 в /etc/i2s.conf): трек
+ * 48 кГц на нём звучит на 8 % медленнее. Тогда треки семейства 48 кГц (48, 96, 192 кГц)
+ * пересчитывает soxr в то же кратное 44,1 кГц (x147/160). Треки 44,1 кГц сюда не попадают
+ * и идут в ALSA как есть, бит в бит. Выход — полные 32 бита (soxr сам ограничивает пики).
+ * Ресемплер живёт от трека к треку той же частоты: стык треков без паузы считается как один
+ * поток, хвост фильтра прошлого трека не обрезается. Только поток плеера */
+static struct {
+    soxr_t s;
+    unsigned irate, orate, ch;
+    int tail;                                        /* в soxr — данные трека: выпустить или сбросить */
+    int32_t *in, *out;
+    size_t icap, ocap;                               /* сэмплов */
+    double cpu;                                      /* с процессора на soxr за трек */
+    long long frames;                                /* кадров выдано за трек */
+} g_rs;
+
+/* RESAMPLE_48=1 в i2s.conf: читаем на каждый трек, переключатель в веб-интерфейсе — без перезапуска */
+static int rs_wanted(void)
+{
+    FILE *f = fopen(g_i2s_f, "r");
+    char l[128];
+    int on = 0;
+    if (!f) return 0;
+    while (fgets(l, sizeof l, f))
+        if (!strncmp(l, "RESAMPLE_48=", 12)) on = atoi(l + 12) == 1;
+    fclose(f);
+    return on;
+}
+
+/* частота вывода для частоты трека: только семейство 48 кГц уходит в 44,1 */
+static unsigned rs_rate(unsigned rate, int on)
+{
+    return on && rate % 48000 == 0 ? rate / 160 * 147 : rate;
+}
+
+static double cpu_s(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+    return (double)t.tv_sec + t.tv_nsec / 1e9;
+}
+
+/* сколько soxr стоил за трек — по журналу видно, тянет ли процессор */
+static void rs_stat(void)
+{
+    if (g_rs.frames > 0)
+        logm(0, "soxr %u -> %u Гц: %.0f с звука, процессор %.1f%%", g_rs.irate, g_rs.orate,
+             (double)g_rs.frames / g_rs.orate, 100.0 * g_rs.cpu * g_rs.orate / (double)g_rs.frames);
+    g_rs.cpu = 0;
+    g_rs.frames = 0;
+}
+
+/* сбросить, что в soxr (перемотка, команда, закрытие вывода) */
+static void rs_drop(void)
+{
+    if (g_rs.s && g_rs.tail) soxr_clear(g_rs.s);
+    g_rs.tail = 0;
+}
+
+/* in кадров через soxr в устройство; in == NULL — выпустить остаток (конец потока) */
+static int rs_run(const int32_t *in, size_t frames)
+{
+    const size_t of = 4096;                          /* кадров за вызов */
+    if (g_rs.ocap < of * g_rs.ch) {
+        int32_t *p = realloc(g_rs.out, of * g_rs.ch * sizeof *p);
+        if (!p) return -1;
+        g_rs.out = p;
+        g_rs.ocap = of * g_rs.ch;
+    }
+    for (;;) {
+        size_t idone = 0, odone = 0;
+        double t0 = cpu_s();
+        soxr_error_t e = soxr_process(g_rs.s, in, in ? frames : 0, &idone, g_rs.out, of, &odone);
+        g_rs.cpu += cpu_s() - t0;
+        if (e) { logm(0, "soxr: %s", e); return -1; }
+        if (odone && out_write_sh(g_rs.out, odone, 0)) return -1;
+        g_rs.frames += (long long)odone;
+        if (in) {
+            in += idone * g_rs.ch;
+            frames -= idone;
+            if (odone < of && (!frames || !idone)) return 0;
+        } else if (!odone) {
+            return 0;
+        }
+    }
+}
+
+/* хвост фильтра — в устройство (дальше трек другой частоты или конец очереди) */
+static int rs_flush(void)
+{
+    if (!g_rs.s || !g_rs.tail) return 0;
+    int r = g_out.pcm ? rs_run(NULL, 0) : 0;
+    soxr_clear(g_rs.s);
+    g_rs.tail = 0;
+    return r;
+}
+
+/* ресемплер под трек: тот же, если частота и каналы прежние (стык без щелчка) */
+static int rs_start(unsigned irate, unsigned orate, unsigned ch, char *err, size_t esz)
+{
+    if (g_rs.s && g_rs.irate == irate && g_rs.orate == orate && g_rs.ch == ch) return 0;
+    rs_flush();
+    if (g_rs.s) soxr_delete(g_rs.s);
+    soxr_io_spec_t io = soxr_io_spec(SOXR_INT32_I, SOXR_INT32_I);
+    soxr_quality_spec_t q = soxr_quality_spec(SOXR_VHQ, 0);     /* линейная фаза */
+    soxr_error_t e = NULL;
+    g_rs.s = soxr_create(irate, orate, ch, &e, &io, &q, NULL);
+    if (!g_rs.s || e) {
+        if (g_rs.s) soxr_delete(g_rs.s);
+        g_rs.s = NULL;
+        snprintf(err, esz, "soxr %u -> %u Гц: %s", irate, orate, e ? e : "не создан");
+        return -1;
+    }
+    g_rs.irate = irate;
+    g_rs.orate = orate;
+    g_rs.ch = ch;
+    g_rs.tail = 0;
+    logm(0, "soxr: %u -> %u Гц, %u кан.", irate, orate, ch);
+    return 0;
+}
+
+/* кадры трека (bits значащих в младших битах) -> во весь int32 -> soxr -> устройство */
+static int rs_write(const int32_t *s, size_t frames, unsigned bits)
+{
+    size_t ns = frames * g_rs.ch;
+    if (ns > g_rs.icap) {
+        int32_t *p = realloc(g_rs.in, ns * sizeof *p);
+        if (!p) return -1;
+        g_rs.in = p;
+        g_rs.icap = ns;
+    }
+    int sh = 32 - (int)bits;
+    for (size_t i = 0; i < ns; i++) g_rs.in[i] = (int32_t)((uint32_t)s[i] << sh);
+    g_rs.tail = 1;
+    return rs_run(g_rs.in, frames);
+}
+
 /* ---------- плеер ---------- */
 /* трек, который плеер начал писать в ALSA: станет aud, когда доиграет буфер прошлого */
 static struct {
@@ -2323,7 +2467,7 @@ static struct {
     unsigned gen;
     long long w;                                     /* g_out.w в его начале */
     double s0, dur;
-    unsigned rate, ch, bits;
+    unsigned rate, ch, bits, orate;
     int kbps;
     char codec[8];
 } g_pend;
@@ -2337,6 +2481,7 @@ static void pend_set(const qent_t *e, const dec_t *d, unsigned gen, double s0)
     g_pend.s0 = s0;
     g_pend.dur = d->dur;
     g_pend.rate = d->rate;
+    g_pend.orate = g_out.rate;
     g_pend.ch = d->ch;
     g_pend.bits = d->bits;
     g_pend.kbps = d->kbps;
@@ -2357,6 +2502,7 @@ static void pl_progress(void)
         g_pl.w0 = g_pend.w;
         g_pl.dur = g_pend.dur;
         g_pl.rate = g_pend.rate;
+        g_pl.orate = g_pend.orate;
         g_pl.ch = g_pend.ch;
         g_pl.bits = g_pend.bits;
         g_pl.kbps = g_pend.kbps;
@@ -2404,7 +2550,7 @@ static void pl_pause(unsigned gen)
     pthread_mutex_lock(&g_pl_mx);
     long long w0 = g_pl.w0;
     if (w0 != W_NONE) {                              /* на паузе место стоит */
-        if (g_pl.rate) g_pl.s0 += (double)(wr - w0) / g_pl.rate;
+        if (g_pl.orate) g_pl.s0 += (double)(wr - w0) / g_pl.orate;
         g_pl.w0 = W_NONE;
     }
     while (g_pl.state == PS_PAUSE && g_gen == gen && g_pl.seek < 0) {
@@ -2438,11 +2584,18 @@ static int play_track(const qent_t *e, unsigned gen, double seek)
     if (!(d.src = src_open(e->t.tid, gen))) return -1;
     int rc = dec_open(&d, err, sizeof err);
     if (!rc && seek > 0 && dec_seek(&d, seek)) seek = 0;
-    if (!rc && g_out.pcm && !out_fits(d.rate, d.ch, d.bits)) {
+    /* семейство 48 кГц без генератора 48 кГц — через soxr в 44,1, в полных 32 битах */
+    unsigned orate = rc ? 0 : rs_rate(d.rate, rs_wanted()), obits = d.bits;
+    int rs = !rc && orate != d.rate;
+    if (rs) obits = 32;
+    if (!rc && g_rs.tail && !(rs && g_rs.irate == d.rate && g_rs.ch == d.ch))
+        rs_flush();                                  /* хвост прошлого трека — пока вывод под него */
+    if (!rc && g_out.pcm && !out_fits(orate, d.ch, obits)) {
         rc = out_drain(gen);                         /* формат другой: сначала доиграть прошлый */
         if (!rc) out_close();
     }
-    if (!rc && out_open(d.rate, d.ch, d.bits, err, sizeof err)) rc = -2;
+    if (!rc && out_open(orate, d.ch, obits, err, sizeof err)) rc = -2;
+    if (!rc && rs && rs_start(d.rate, orate, d.ch, err, sizeof err)) rc = -2;
     if (!rc) {
         pend_set(e, &d, gen, seek);
         pl_progress();
@@ -2455,6 +2608,7 @@ static int play_track(const qent_t *e, unsigned gen, double seek)
         pthread_mutex_unlock(&g_pl_mx);
         if (sk >= 0) {                               /* перемотка в этом же треке */
             out_unwrite(NULL);
+            if (rs) rs_drop();
             if (dec_seek(&d, sk)) logm(0, "трек %s: перемотка на %.0f с не вышла", e->t.tid, sk);
             pend_set(e, &d, gen, sk);
             pl_progress();
@@ -2466,7 +2620,7 @@ static int play_track(const qent_t *e, unsigned gen, double seek)
         if (n <= 0) { rc = n ? -1 : 0; break; }
         for (size_t off = 0; off < d.pn && g_gen == gen; ) {   /* по периоду: команды не ждут */
             size_t k = d.pn - off < g_out.period ? d.pn - off : g_out.period;
-            if (out_write(d.pcm + off * d.ch, k)) { rc = -2; break; }
+            if (rs ? rs_write(d.pcm + off * d.ch, k, d.bits) : out_write(d.pcm + off * d.ch, k)) { rc = -2; break; }
             off += k;
             pl_progress();
         }
@@ -2476,6 +2630,10 @@ static int play_track(const qent_t *e, unsigned gen, double seek)
         rc = 1;
     } else if (rc == -1 || (rc == -2 && err[0])) {
         logm(0, "трек %s: %s", e->t.tid, err[0] ? err : "оборвался");
+    }
+    if (rs) {
+        if (rc) rs_drop();                           /* доигран — хвост остаётся в soxr до стыка */
+        rs_stat();
     }
     dec_close(&d);
     src_close(d.src);
@@ -2527,6 +2685,7 @@ static void *player_thread(void *arg)
             continue;
         }
         pthread_mutex_unlock(&g_pl_mx);               /* очередь кончилась: доиграть буфер */
+        rs_flush();
         int c = out_drain(gen);
         pthread_mutex_lock(&g_pl_mx);
         if (!c && g_gen == gen) pl_stop();

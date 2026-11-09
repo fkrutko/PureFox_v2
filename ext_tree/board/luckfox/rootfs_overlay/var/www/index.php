@@ -322,6 +322,20 @@
                         </div>
                     </div>
                 </div>
+                <div class="i2s-group" id="i2s-resample-48-group">
+                    <div class="i2s-group-header">
+                        <h3 data-lang="resample_48_title">48k → 44.1k</h3>
+                        <div class="toggle-switch-compact">
+                            <input type="radio" name="resample_48" value="0" id="modal-resample-48-off" class="toggle-input-compact">
+                            <input type="radio" name="resample_48" value="1" id="modal-resample-48-on" class="toggle-input-compact">
+                            <label class="toggle-label-compact">
+                                <div class="toggle-slider-compact"></div>
+                                <span class="toggle-option-compact left" onclick="document.getElementById('modal-resample-48-off').click()">OFF</span>
+                                <span class="toggle-option-compact right" onclick="document.getElementById('modal-resample-48-on').click()">ON</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
                 <div class="i2s-group" style="display:none;">
                     <div class="i2s-group-header">
                         <h3 data-lang="leftjust_title">LeftJust</h3>

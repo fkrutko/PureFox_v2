@@ -156,6 +156,23 @@ if (isset($_POST['keep_clocks'])) {
     }
 }
 
+// If "48 kHz -> 44.1 kHz" is changed: Yandex Music reads it on the next
+// track, MPD (UPnP) gets its config at start, so restart it if it runs
+if (isset($_POST['resample_48'])) {
+    $resample_48 = $_POST['resample_48'];
+    if (in_array($resample_48, ['0', '1'])) {
+        $contents = file_exists($config_file) ? file_get_contents($config_file) : '';
+        $pattern = '/^RESAMPLE_48=.*$/m';
+        if (preg_match($pattern, $contents)) {
+            $contents = preg_replace($pattern, "RESAMPLE_48=$resample_48", $contents);
+        } else {
+            $contents = rtrim($contents) . "\n\n### No 48 kHz oscillator: resample 48 kHz family to 44.1 kHz family (MPD, Yandex Music): 0 or 1 ###\nRESAMPLE_48=$resample_48\n";
+        }
+        file_put_contents($config_file, $contents);
+        exec('/usr/bin/sudo /bin/sh -c ' . escapeshellarg('pidof mpd >/dev/null && /etc/rc.pure/S95mpd restart') . ' >/dev/null 2>&1');
+    }
+}
+
 // If LeftJust setting is changed
 if (isset($_POST['leftjust'])) {
     $leftjust = $_POST['leftjust'];
@@ -179,7 +196,7 @@ if (isset($_POST['leftjust'])) {
 // AJAX request for current status
 if (isset($_GET['action']) && $_GET['action'] === 'getStatus') {
     $result = ['mode' => '', 'mclk' => '', 'submode' => '', 'pcm_swap' => '0', 'dsd_swap' => '1', 'freq_swap' => '0', 'leftjust' => '0',
-               'keep_clocks' => '0', 'keep_clocks_supported' => file_exists('/sys/devices/platform/ffae0000.i2s/keep_clocks')];
+               'keep_clocks' => '0', 'resample_48' => '0', 'keep_clocks_supported' => file_exists('/sys/devices/platform/ffae0000.i2s/keep_clocks')];
 
     if (file_exists($config_file)) {
         $contents = file_get_contents($config_file);
@@ -208,6 +225,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'getStatus') {
         }
         if (preg_match('/^KEEP_CLOCKS=([01])/m', $contents, $matches)) {
             $result['keep_clocks'] = $matches[1];
+        }
+        if (preg_match('/^RESAMPLE_48=([01])/m', $contents, $matches)) {
+            $result['resample_48'] = $matches[1];
         }
     }
 

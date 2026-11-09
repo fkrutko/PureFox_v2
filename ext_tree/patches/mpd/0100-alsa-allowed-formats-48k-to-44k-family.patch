@@ -1,0 +1,49 @@
+From: PureFox
+Subject: [PATCH] alsa: allowed_formats maps 48 kHz family to 44.1 kHz family
+
+A board with only a 44.1 kHz oscillator lists the 44.1 kHz family rates
+in allowed_formats. A 48 kHz family rate that is not listed now goes to
+the same multiple of 44.1 kHz (96 kHz -> 88.2 kHz) instead of the first
+listed format, and a resampled 16-bit stream is played as 24 bits so the
+resampler output is not cut back to 16 bits.
+
+Signed-off-by: PureFox
+---
+--- a/src/output/plugins/AlsaOutputPlugin.cxx
++++ b/src/output/plugins/AlsaOutputPlugin.cxx
+@@ -688,6 +688,18 @@
+ 		if (needle.MatchMask(i.format))
+ 			return i;
+ 
++	/* PureFox: a 48 kHz family PCM rate that is not allowed (no 48 kHz
++	   oscillator) goes to the same multiple of 44.1 kHz, so 96 kHz
++	   becomes 88.2 kHz and not 44.1 kHz */
++	if (needle.format != SampleFormat::DSD &&
++	    needle.sample_rate % 48000 == 0) {
++		AudioFormat f = needle;
++		f.sample_rate = needle.sample_rate / 160 * 147;
++		for (const auto &i : haystack)
++			if (f.MatchMask(i.format))
++				return i;
++	}
++
+ 	return haystack.front();
+ }
+ 
+@@ -796,9 +808,16 @@
+ #endif
+ 
+ 		if (!allowed_formats.empty()) {
++			const unsigned in_rate = audio_format.sample_rate;
+ 			const auto &a = BestMatch(allowed_formats,
+ 						  audio_format);
+ 			audio_format.ApplyMask(a.format);
++
++			/* PureFox: resampled 16 bit PCM keeps the
++			   resampler's resolution in 24 bits */
++			if (audio_format.sample_rate != in_rate &&
++			    audio_format.format == SampleFormat::S16)
++				audio_format.format = SampleFormat::S24_P32;
+ #ifdef ENABLE_DSD
+ 			dop = a.dop;
+ #endif

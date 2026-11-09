@@ -14,9 +14,28 @@ upnp_name() {
     fi
 }
 
+# MPD config: /etc/mpd.conf, or with RESAMPLE_48=1 in /etc/i2s.conf (no 48 kHz
+# oscillator) a copy in /tmp where the ALSA output allows only the 44.1 kHz
+# family and DSD: a 48 kHz family stream goes through soxr to the same
+# multiple of 44.1 kHz (48 -> 44.1, 96 -> 88.2, 192 -> 176.4 kHz), 44.1 kHz
+# family and DSD stay bit-perfect
+mpd_conf() {
+    if grep -q '^RESAMPLE_48=1' /etc/i2s.conf 2>/dev/null; then
+        awk '{ print }
+             /^[ \t]*auto_format[ \t]/ {
+                 print "\tallowed_formats\t\"44100:*:* 88200:*:* 176400:*:* 352800:*:* 705600:*:* 22050:*:* 11025:*:* *:dsd:*\""
+             }
+             END { print "\nresampler {\n\tplugin\t\t\"soxr\"\n\tquality\t\t\"very high\"\n}" }' \
+            /etc/mpd.conf > /tmp/mpd.conf
+        echo /tmp/mpd.conf
+    else
+        echo /etc/mpd.conf
+    fi
+}
+
 start() {
     printf "Starting MPD (UPnP): "
-    /usr/bin/mpd /etc/mpd.conf > /dev/null 2>&1
+    /usr/bin/mpd "$(mpd_conf)" > /dev/null 2>&1
     mkdir -p /tmp/upmpdcli && chown upmpdcli /tmp/upmpdcli
     /usr/bin/upmpdcli -D -c /etc/upmpdcli.conf -f "$(upnp_name)" > /dev/null 2>&1
     sleep 0.5

@@ -161,6 +161,7 @@ The I2S menu settings are configured in the web interface (the "I2S Settings" pa
 - **DSD Swap** — `OFF` / `ON` — invert physical channels for DSD.
 - **44/48 Swap** — `OFF` / `ON` — reverse frequency domain order (44.1 / 48 kHz).
 - **Clocks in pause** — `OFF` / `ON` (default `OFF`) — with `ON`, BCLK/LRCK keep running with silence when PCM playback pauses or stops and between tracks, so the DAC stays locked and the start of the next track is not lost while it locks again. A change of rate or sample width still reprograms the bus briefly; DSD always stops it. Turn it off if the DAC behaves worse with it (for example does not go to standby). Applies at once, without a reboot, on all kernels (6.1, 5.10 and 1.6). Yandex Music does not stop the stream when the sample width changes: 16 and 24 bit go in one 32-bit stream.
+- **48k → 44.1k** — `OFF` / `ON` (default `OFF`) — for boards with only the 44.1 kHz oscillator, where a 48 kHz track plays 8 % slow and flat. With `ON`, tracks of the 48 kHz family (48, 96, 192 kHz) go through the soxr resampler (very high, linear phase) to the same multiple of 44.1 kHz: 48 → 44.1, 96 → 88.2, 192 → 176.4 kHz. 44.1 kHz tracks and DSD stay bit-perfect. Applies to Yandex Music (from the next track) and MPD (UPnP, restarted automatically); other inputs (USB, AirPlay, NAA, Scream) are unchanged.
 
 > **Warning:** the MCLK output has different settings in PLL and EXT modes (OUTPUT/INPUT), and any change to the I2S settings takes effect only after a **device reboot**.
 

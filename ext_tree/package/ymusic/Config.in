@@ -7,9 +7,13 @@ config BR2_PACKAGE_YMUSIC
 	select BR2_PACKAGE_ALSA_LIB
 	select BR2_PACKAGE_FLAC
 	select BR2_PACKAGE_LIBMAD
+	select BR2_PACKAGE_LIBSOXR
 	help
 	  Yandex Music (ported from DigiFox). ymusicd on port 6601 serves a
 	  JSON API for a desktop app (login, browse, search, queue, My Wave,
 	  playback control) and plays the queue itself: decrypts the track
 	  files (encraw, AES-128-CTR), decodes FLAC (libFLAC) and MP3
-	  (libmad) and writes them to ALSA unchanged.
+	  (libmad) and writes them to ALSA unchanged. With RESAMPLE_48=1 in
+	  /etc/i2s.conf (no 48 kHz oscillator on the board) tracks of the
+	  48 kHz family go through libsoxr to the same multiple of 44.1 kHz;
+	  44.1 kHz tracks still go to ALSA unchanged.
