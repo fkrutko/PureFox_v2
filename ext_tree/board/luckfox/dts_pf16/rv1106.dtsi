@@ -171,21 +171,6 @@ mmc0 {
 			opp-microvolt = <875000 850000 1000000>;
 			clock-latency-ns = <40000>;
 		};
-		opp-1416000000 {
-			opp-hz = /bits/ 64 <1416000000>;
-			opp-microvolt = <925000 850000 1000000>;
-			clock-latency-ns = <40000>;
-		};
-		opp-1512000000 {
-			opp-hz = /bits/ 64 <1512000000>;
-			opp-microvolt = <975000 850000 1000000>;
-			clock-latency-ns = <40000>;
-		};
-		opp-1608000000 {
-			opp-hz = /bits/ 64 <1608000000>;
-			opp-microvolt = <1000000 850000 1000000>;
-			clock-latency-ns = <40000>;
-		};
 	};
 
 	arm-pmu {
