@@ -138,6 +138,7 @@ $(document).ready(function () {
             'ln_dma': 'Периодов DMA на буфер',
             'ln_dma_hint': 'Меньше периодов, они длиннее — меньше прерываний. Действует со следующего запуска воспроизведения. По умолчанию: 16.',
             'ln_dma_reboot': 'Перезагрузите плату, чтобы включить.',
+            'ln_dma_warning': 'При DSD1024 (NAA) оставьте 16: с меньшим числом периодов буфер сжимается вплоть до 3 мс, звук заикается, затем останавливается.',
             'ln_scream': 'Ресемплинг Scream',
             'ln_scream_hint': 'Выкл: частота, которую выход не поддерживает, не пересчитывается, а вызывает ошибку. По умолчанию: Вкл.',
             'ln_ppy': 'Вернуться на ppy',
@@ -225,6 +226,7 @@ $(document).ready(function () {
             'ln_dma': 'DMA periods per buffer',
             'ln_dma_hint': 'Fewer, longer periods: fewer interrupts. Applies when playback starts. Default: 16.',
             'ln_dma_reboot': 'Reboot to enable.',
+            'ln_dma_warning': 'With DSD1024 (NAA) keep 16: fewer periods shrink the buffer (down to 3 ms), so playback stutters and then stops.',
             'ln_scream': 'Scream resampling',
             'ln_scream_hint': 'Off: a sample rate the output does not take fails instead of being resampled. Default: On.',
             'ln_ppy': 'Back to ppy',
@@ -312,6 +314,7 @@ $(document).ready(function () {
             'ln_dma': 'DMA-Perioden pro Puffer',
             'ln_dma_hint': 'Weniger, längere Perioden: weniger Interrupts. Gilt ab dem nächsten Wiedergabestart. Standard: 16.',
             'ln_dma_reboot': 'Zum Aktivieren neu starten.',
+            'ln_dma_warning': 'Bei DSD1024 (NAA) bei 16 bleiben: mit weniger Perioden schrumpft der Puffer bis auf 3 ms, die Wiedergabe stockt und bricht dann ab.',
             'ln_scream': 'Scream-Resampling',
             'ln_scream_hint': 'Aus: Eine vom Ausgang nicht unterstützte Abtastrate führt zu einem Fehler statt zu Resampling. Standard: Ein.',
             'ln_ppy': 'Zurück zu ppy',
@@ -399,6 +402,7 @@ $(document).ready(function () {
             'ln_dma': 'Périodes DMA par tampon',
             'ln_dma_hint': 'Moins de périodes, plus longues : moins d\'interruptions. S\'applique au prochain démarrage de la lecture. Par défaut : 16.',
             'ln_dma_reboot': 'Redémarrez pour l\'activer.',
+            'ln_dma_warning': 'En DSD1024 (NAA), gardez 16 : avec moins de périodes, le tampon descend jusqu\'à 3 ms, la lecture saccade puis s\'arrête.',
             'ln_scream': 'Rééchantillonnage Scream',
             'ln_scream_hint': 'Off : une fréquence non prise en charge par la sortie provoque une erreur au lieu d\'être rééchantillonnée. Par défaut : On.',
             'ln_ppy': 'Retour à ppy',
@@ -486,6 +490,7 @@ $(document).ready(function () {
             'ln_dma': '每个缓冲区的 DMA 周期数',
             'ln_dma_hint': '周期更少、更长：中断更少。从下次开始播放时生效。默认：16。',
             'ln_dma_reboot': '重启后启用。',
+            'ln_dma_warning': 'DSD1024（NAA）请保持 16：周期更少时缓冲区最短可至 3 毫秒，播放会卡顿，随后停止。',
             'ln_scream': 'Scream 重采样',
             'ln_scream_hint': '关：输出不支持的采样率将报错，而不是被重采样。默认：开。',
             'ln_ppy': '返回 ppy',
@@ -1451,6 +1456,8 @@ $(document).ready(function () {
         });
         $('#ln-dma .ln-option').prop('disabled', usbOutput || !st.dma_supported);
         $('#ln-dma-reboot').prop('hidden', st.dma_supported);
+        // Short buffers underrun at DSD1024 (NAA): 4096 frames, about 3 ms
+        $('#ln-dma-warning').prop('hidden', usbOutput || s.DMA_PERIODS === '16');
         // Only Scream reads this setting
         $('#ln-scream .ln-option').prop('disabled', !st.scream_active);
     }

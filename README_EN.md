@@ -46,7 +46,7 @@ Forum users reported that firmware 1.6 (kernel 5.10) sounds different from 2.8 (
 - **6.1 and 5.10** run the same I2S driver (bit-perfect, the same I2S settings), so they differ only in the kernel and, by default, the CPU clock (below).
 - **5.10 and 5.10 (old drv)** differ only in the I2S driver and device trees. The old driver has a software volume control; it stays at 100 and the web interface does not change it, and at 100 PCM passes unaltered.
 - **Switching.** The "Kernel 6.1 | 5.10 | 5.10 (old drv)" selector on the **Tweaks** tab writes the selected kernel and the device tree of the current I2S mode to the boot partition, verifies them and reboots the board. Do not power off while it writes; if the write fails, retry it or reflash the board with RV1106_Toolkit. From the shell: `/opt/kernel.sh 6.1`, `/opt/kernel.sh 5.10` or `/opt/kernel.sh 1.6` (5.10 with the old driver), then `reboot`; `/opt/kernel.sh` with no argument shows the running and the selected kernel.
-- **CPU clock.** With the default setting, 5.10 runs the CPU at 1608 MHz (performance governor) and 6.1 stays at the 1104 MHz the bootloader sets. The **Tweaks** tab can set the same frequency for both.
+- **CPU clock.** With the default setting, 5.10 runs the CPU at 1296 MHz (performance governor) and 6.1 stays at the 1104 MHz the bootloader sets. 1296 MHz is the top: the CPU supply is fixed at 0.9 V, too low for 1416–1608 MHz. The **Tweaks** tab can set the same frequency for both.
 - **With kernel 5.10** (either driver) the USB port is host only: output to a USB DAC works, USB to I2S mode does not.
 - The online update keeps the kernel choice.
 
@@ -56,10 +56,10 @@ The second tab of the web page. The kernel selector is there, with a line under 
 
 | Setting | Default | What it does |
 | ------- | ------- | ------------ |
-| **CPU frequency** | 1608 MHz on 5.10, 1104 MHz on 6.1 | Caps the CPU clock (408–1608 MHz): less current and lower core voltage. Playback takes almost no CPU; check DSD512/1024 and 768 kHz for dropouts after lowering it. |
+| **CPU frequency** | 1296 MHz on 5.10, 1104 MHz on 6.1 | Caps the CPU clock (408–1296 MHz): less current. Most playback takes little CPU, but DSD1024 over NAA takes most of it; check DSD512/1024 and 768 kHz for dropouts after lowering it. |
 | **I2S pin drive** | level 2 | Drive strength 0–7 of the SCLK, LRCK and data outputs. Lower: slower edges, less ringing and ground bounce; higher helps with long wires. |
 | **MCLK pin drive** | level 3 | The same for the MCLK output. No effect in EXT mode, where MCLK is an input. |
-| **DMA periods per buffer** | 16 | The driver splits the ALSA buffer into at least 16 periods, one interrupt each. 8, 4 or 2 give fewer, longer periods. Applies when playback starts. |
+| **DMA periods per buffer** | 16 | The driver splits the ALSA buffer into at least 16 periods, one interrupt each. 8, 4 or 2 give fewer, longer periods. Applies when playback starts. With DSD1024 over NAA keep 16: with fewer periods the buffer gets as short as 3 ms, and playback stutters and then stops. |
 | **Scream resampling** | On | Off: ALSA does not resample a rate the I2S output does not take; Scream fails instead. |
 
 From the shell: `/opt/lownoise.sh set KEY VALUE`, see the script for the keys.

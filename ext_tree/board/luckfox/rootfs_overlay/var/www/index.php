@@ -112,6 +112,7 @@
                 <div class="ln-text">
                     <div class="ln-title" data-lang="ln_dma">DMA periods per buffer</div>
                     <div class="ln-hint"><span data-lang="ln_dma_hint">Fewer, longer periods: fewer interrupts. Applies when playback starts. Default: 16.</span> <span id="ln-dma-reboot" data-lang="ln_dma_reboot" hidden>Reboot to enable.</span></div>
+                    <div class="ln-hint ln-hint-warning" id="ln-dma-warning" data-lang="ln_dma_warning" hidden>With DSD1024 (NAA) keep 16: fewer periods shrink the buffer (down to 3 ms), so playback stutters and then stops.</div>
                 </div>
                 <div class="seg" id="ln-dma">
                     <button type="button" class="seg-option ln-option" data-key="DMA_PERIODS" data-value="16">16</button>
